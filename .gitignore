@@ -1,3 +1,6 @@
 .env
 node_modules/
 .DS_Store
+
+# v1 local auth + preferences (replace with DB in production)
+server/data/*.json

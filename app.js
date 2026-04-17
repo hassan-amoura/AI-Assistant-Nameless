@@ -1,11 +1,52 @@
-// app.js — UI logic, conversation state, and message rendering
+// app.js — UI logic, conversation state, message rendering, report library
 // Depends on api.js being loaded first (sendToAI, extractSQL).
+
+/* ── marked configuration ───────────────────────────── */
+
+if (typeof marked !== 'undefined') {
+  marked.use({ breaks: true });
+}
 
 /* ── State ─────────────────────────────────────────── */
 
-// conversations: Array<{ id: number, title: string, messages: Array<{role, content}>, sql: string|null }>
 let conversations = [];
-let activeId = null;   // null = welcome screen / new conversation pending
+let activeId = null;
+
+/** Explicit library saves only (not autosaved generation). */
+const MANUAL_REPORTS_KEY = 'pw_reports_manual';
+
+const ARCHIVED_CONVERSATIONS_KEY = 'pw_archived_conversations';
+const DELETED_CONVERSATIONS_KEY  = 'pw_deleted_conversations';
+const PREFERENCES_KEY            = 'pw_preferences';
+const USER_MEMORY_KEY            = 'pw_user_memory';
+const DELETED_PURGE_DAYS         = 30;
+
+/** Persisted UI for same-tab refresh (not used on first tab load). */
+const UI_SNAPSHOT_KEY = 'pw_ui_snapshot';
+/** sessionStorage: set after first load in this tab — distinguishes refresh vs fresh tab open. */
+const TAB_SESSION_KEY = 'pw_tab_session_started';
+
+// Global mode: sent with /api/chat (Report vs Advisor routing)
+let advisorMode = false;
+
+/**
+ * Signed-in user + server preferences (v1).
+ * FUTURE: inject preferredRevenueMethod / explanationStyle into prompts; optional memory.
+ */
+let pwCurrentUser = null;
+let pwPreferences = null;
+
+/** Main workspace: chat, library list, or saved-report detail (not modal). */
+let appView = 'chat';
+
+/** Full library row while viewing report detail; cleared when leaving detail. */
+let detailLibraryEntry = null;
+
+/** Results vs SQL workspace inside report detail (Chat is a separate navigation action). */
+let reportDetailWorkspace = 'results';
+
+// Current mock data for the results panel — reused by full screen view and CSV export
+let currentMockData = null;
 
 /* ── DOM refs ───────────────────────────────────────── */
 
@@ -20,47 +61,326 @@ const sqlOutput = document.getElementById('sql-output');
 
 /* ── Sidebar ────────────────────────────────────────── */
 
+const ICON_ARROW_LEFT  = `<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M9.78 12.78a.75.75 0 01-1.06 0L4.47 8.53a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 1.06L6.06 8l3.72 3.72a.75.75 0 010 1.06z"/></svg>`;
+const ICON_ARROW_RIGHT = `<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M6.22 3.22a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 010-1.06z"/></svg>`;
+
 function renderSidebar() {
-  if (!conversations.length) {
-    convList.innerHTML = '';
+  renderConversationList(conversations, true);
+}
+
+function renderConversationList(convs, showSections = false) {
+  if (!convs.length) { convList.innerHTML = ''; return; }
+
+  if (!showSections) {
+    convList.innerHTML = convs.map(c => buildConvItemHTML(c)).join('');
     return;
   }
-  convList.innerHTML = conversations.map(c => `
-    <div class="conv-item ${c.id === activeId ? 'active' : ''}"
+
+  const pinned  = convs.filter(c => c.pinned);
+  const recents = convs.filter(c => !c.pinned);
+  let html = '';
+
+  if (pinned.length) {
+    html += `<div class="conv-section-label">Pinned</div>`;
+    html += pinned.map(c => buildConvItemHTML(c)).join('');
+    if (recents.length) html += `<div class="conv-section-label conv-section-label--recents">Recent</div>`;
+  }
+
+  html += recents.map(c => buildConvItemHTML(c)).join('');
+  convList.innerHTML = html;
+}
+
+function buildConvItemHTML(c) {
+  const isActive = c.id === activeId;
+  const pinIcon = c.pinned
+    ? `<span class="conv-pin-icon" aria-label="Pinned"><svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor"><path d="M4.456.734a1.75 1.75 0 012.826.504l.613 1.327a3.08 3.08 0 002.084 1.707l2.454.584c1.332.317 1.8 1.972.832 2.94L11.06 9h1.44a.75.75 0 010 1.5H9.75v3.75a.75.75 0 01-1.5 0V10.5H4.5a.75.75 0 010-1.5h1.44L3.735 6.797c-.968-.968-.5-2.623.832-2.94l2.454-.584A3.08 3.08 0 009.105 1.57L8.491.241A.25.25 0 008.086.185L4.456.734z"/></svg></span>`
+    : '';
+  return `
+    <div class="conv-item ${isActive ? 'active' : ''} ${c.pinned ? 'conv-item--pinned' : ''}"
+         data-conv-id="${c.id}"
          onclick="switchTo(${c.id})"
+         data-tooltip="${escapeAttr(c.title)}"
          title="${escapeAttr(c.title)}">
       <span class="conv-item-icon">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
           <path d="M2.75 2.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h1.5a.75.75 0 01.75.75v1.19l1.72-1.72a.75.75 0 01.53-.22h5.25a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25H2.75zM1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H8.56l-2.34 2.34a.75.75 0 01-1.28-.53V12h-.19A1.75 1.75 0 013 10.25v-7.5z"/>
         </svg>
       </span>
+      ${pinIcon}
       <span class="conv-title">${escapeHTML(c.title)}</span>
-    </div>
-  `).join('');
+      <button type="button" class="conv-menu-btn" onclick="openConvMenu(${c.id}, this, event)" title="More options" aria-label="Conversation options">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8 9a1.5 1.5 0 100-3 1.5 1.5 0 000 3zM1.5 9a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm13 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"/>
+        </svg>
+      </button>
+    </div>`;
+}
+
+function searchConversations(query) {
+  const clearBtn = document.getElementById('btn-search-clear');
+  if (clearBtn) clearBtn.hidden = !query;
+  if (!query.trim()) { renderSidebar(); return; }
+  const lower = query.toLowerCase();
+  renderConversationList(conversations.filter(c => c.title.toLowerCase().includes(lower)));
+}
+
+function clearSearch() {
+  const input = document.getElementById('search-input');
+  if (input) input.value = '';
+  const clearBtn = document.getElementById('btn-search-clear');
+  if (clearBtn) clearBtn.hidden = true;
+  renderSidebar();
+}
+
+/* ── Conversation context menu ──────────────────────── */
+
+let _openConvMenuId = null;
+
+function openConvMenu(id, btnEl, event) {
+  event.stopPropagation();
+  closeAllConvMenus();
+
+  const conv = conversations.find(c => c.id === id);
+  if (!conv) return;
+
+  const rect = btnEl.getBoundingClientRect();
+  const dropdown = document.createElement('div');
+  dropdown.id = 'conv-menu-dropdown';
+  dropdown.className = 'conv-menu-dropdown';
+  dropdown.style.cssText = `position:fixed;top:${rect.bottom + 4}px;left:${rect.left - 56}px;z-index:1000;`;
+  dropdown.innerHTML = `
+    <button class="conv-menu-item" onclick="event.stopPropagation();pinConversation(${id});closeAllConvMenus()">
+      ${conv.pinned ? 'Unpin' : 'Pin'}
+    </button>
+    <button class="conv-menu-item" onclick="event.stopPropagation();startRenameConversation(${id});closeAllConvMenus()">
+      Rename
+    </button>
+    <button class="conv-menu-item" onclick="event.stopPropagation();archiveConversation(${id});closeAllConvMenus()">
+      Archive
+    </button>
+    <button class="conv-menu-item conv-menu-item--danger" onclick="event.stopPropagation();deleteConversation(${id});closeAllConvMenus()">
+      Delete
+    </button>`;
+  document.body.appendChild(dropdown);
+  _openConvMenuId = id;
+
+  // Keep dropdown in viewport
+  const dr = dropdown.getBoundingClientRect();
+  if (dr.right > window.innerWidth) dropdown.style.left = `${window.innerWidth - dr.width - 8}px`;
+  if (dr.bottom > window.innerHeight) dropdown.style.top = `${rect.top - dr.height - 4}px`;
+
+  setTimeout(() => document.addEventListener('click', closeAllConvMenus, { once: true }), 0);
+}
+
+function closeAllConvMenus() {
+  const el = document.getElementById('conv-menu-dropdown');
+  if (el) el.remove();
+  _openConvMenuId = null;
+}
+
+function pinConversation(id) {
+  const conv = conversations.find(c => c.id === id);
+  if (!conv) return;
+  conv.pinned = !conv.pinned;
+  saveConversations();
+  renderSidebar();
+}
+
+function startRenameConversation(id) {
+  const itemEl = convList.querySelector(`[data-conv-id="${id}"]`);
+  if (!itemEl) return;
+  const titleEl = itemEl.querySelector('.conv-title');
+  const conv = conversations.find(c => c.id === id);
+  if (!titleEl || !conv) return;
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'conv-title-input';
+  input.value = conv.title;
+  titleEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const confirm = () => {
+    if (done) return;
+    done = true;
+    const val = input.value.trim();
+    if (val && val !== conv.title) {
+      conv.title = val;
+      if (conv.savedReport) conv.savedReport.title = val;
+      saveConversations();
+    }
+    renderSidebar();
+  };
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); confirm(); }
+    if (e.key === 'Escape') { done = true; renderSidebar(); }
+    e.stopPropagation();
+  });
+  input.addEventListener('blur', confirm);
+  input.addEventListener('click', e => e.stopPropagation());
+}
+
+function archiveConversation(id) {
+  const idx = conversations.findIndex(c => c.id === id);
+  if (idx === -1) return;
+  const [conv] = conversations.splice(idx, 1);
+  const arcs = loadArchivedConversations();
+  arcs.unshift(conv);
+  saveArchivedConversations(arcs);
+  if (activeId === id) { activeId = null; renderMessages(); }
+  saveConversations();
+  renderSidebar();
+}
+
+function deleteConversation(id) {
+  const idx = conversations.findIndex(c => c.id === id);
+  if (idx === -1) return;
+  const [conv] = conversations.splice(idx, 1);
+  const dels = loadDeletedConversations();
+  dels.unshift({ ...conv, deletedAt: Date.now() });
+  saveDeletedConversations(dels);
+  if (activeId === id) { activeId = null; renderMessages(); }
+  saveConversations();
+  renderSidebar();
+}
+
+/* ── Archived conversations ─────────────────────────── */
+
+function loadArchivedConversations() {
+  try { return JSON.parse(localStorage.getItem(ARCHIVED_CONVERSATIONS_KEY) || '[]'); }
+  catch (_) { return []; }
+}
+
+function saveArchivedConversations(arcs) {
+  try { localStorage.setItem(ARCHIVED_CONVERSATIONS_KEY, JSON.stringify(arcs.slice(0, 100))); }
+  catch (_) {}
+}
+
+function restoreArchivedConversation(archId) {
+  const arcs = loadArchivedConversations();
+  const idx = arcs.findIndex(c => c.id === archId);
+  if (idx === -1) return;
+  const [conv] = arcs.splice(idx, 1);
+  saveArchivedConversations(arcs);
+  conversations.unshift(conv);
+  saveConversations();
+  renderSidebar();
+  renderSettingsArchived();
+}
+
+/* ── Recently deleted conversations ─────────────────── */
+
+function loadDeletedConversations() {
+  try { return JSON.parse(localStorage.getItem(DELETED_CONVERSATIONS_KEY) || '[]'); }
+  catch (_) { return []; }
+}
+
+function saveDeletedConversations(dels) {
+  try { localStorage.setItem(DELETED_CONVERSATIONS_KEY, JSON.stringify(dels.slice(0, 100))); }
+  catch (_) {}
+}
+
+function purgeExpiredDeletedConversations() {
+  const cutoff = Date.now() - DELETED_PURGE_DAYS * 24 * 60 * 60 * 1000;
+  const dels = loadDeletedConversations().filter(c => c.deletedAt > cutoff);
+  saveDeletedConversations(dels);
+}
+
+function restoreDeletedConversation(delId) {
+  const dels = loadDeletedConversations();
+  const idx = dels.findIndex(c => c.id === delId);
+  if (idx === -1) return;
+  const [conv] = dels.splice(idx, 1);
+  delete conv.deletedAt;
+  saveDeletedConversations(dels);
+  conversations.unshift(conv);
+  saveConversations();
+  renderSidebar();
+  renderSettingsDeleted();
+}
+
+function updateCollapseToggleIcon(isCollapsed) {
+  const btn = document.getElementById('btn-collapse-toggle');
+  if (!btn) return;
+  btn.innerHTML = isCollapsed ? ICON_ARROW_RIGHT : ICON_ARROW_LEFT;
+  btn.title = isCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
+}
+
+function initSidebar() {
+  if (localStorage.getItem('pw_sidebar_collapsed') === '1') {
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar) sidebar.classList.add('collapsed');
+    updateCollapseToggleIcon(true);
+  }
+  updateSidebarNavLabels();
+}
+
+function setAdvisorMode(isAdvisor) {
+  // Sent with /api/chat so the server uses the data-advisor route; client hides <pw-options> chips here.
+  advisorMode = isAdvisor;
+  document.getElementById('btn-mode-report')?.classList.toggle('active', !isAdvisor);
+  document.getElementById('btn-mode-advisor')?.classList.toggle('active', isAdvisor);
 }
 
 function switchTo(id) {
+  if (appView === 'report-detail') {
+    leaveReportDetailShell();
+    appView = 'chat';
+    exitLibraryLayoutToChat();
+  }
   activeId = id;
   renderSidebar();
   renderMessages();
   const conv = getActive();
-  if (conv && conv.sql) {
-    openSQLPanel(conv.sql, conv.title);
+  if (conv && hasCompletedReport(conv)) {
+    prepareSQLPanelContent(getReportSql(conv), conv.title, getReportCategoryForMock(conv));
+    sqlPanel.classList.remove('open');
+    resetCopyBtn();
+    persistUiSnapshot();
   } else {
     closeSQLPanel();
   }
+  syncSaveReportButtonUI();
+  updateViewReportTab();
   inputEl.focus();
 }
 
 function newReport() {
+  if (appView === 'report-detail') {
+    leaveReportDetailShell();
+    appView = 'chat';
+    exitLibraryLayoutToChat();
+  }
   activeId = null;
   renderSidebar();
   renderMessages();
   closeSQLPanel();
+  syncSaveReportButtonUI();
+  updateViewReportTab();
   inputEl.value = '';
   inputEl.style.height = 'auto';
   sendBtn.disabled = true;
   inputEl.focus();
+}
+
+function submitChip(q) {
+  inputEl.value = q;
+  onInput(inputEl);
+  sendMessage();
+}
+
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  if (window.innerWidth <= 768) {
+    sidebar.classList.toggle('sidebar-open');
+    return;
+  }
+  const isCollapsed = sidebar.classList.toggle('collapsed');
+  localStorage.setItem('pw_sidebar_collapsed', isCollapsed ? '1' : '0');
+  updateCollapseToggleIcon(isCollapsed);
 }
 
 /* ── Chat rendering ─────────────────────────────────── */
@@ -69,30 +389,139 @@ function getActive() {
   return conversations.find(c => c.id === activeId) || null;
 }
 
+function hasCompletedReport(conv) {
+  if (!conv) return false;
+  if (conv.savedReport && conv.savedReport.sql) return true;
+  return !!conv.sql;
+}
+
+function getReportSql(conv) {
+  if (!conv) return '';
+  return (conv.savedReport && conv.savedReport.sql) || conv.sql || '';
+}
+
+function getReportReasoning(conv) {
+  if (!conv) return null;
+  if (conv.savedReport && Object.prototype.hasOwnProperty.call(conv.savedReport, 'reasoning'))
+    return conv.savedReport.reasoning || null;
+  return conv.reasoning || null;
+}
+
+function getReportCategoryForMock(conv) {
+  if (!conv) return 'Reports';
+  if (conv.savedReport && conv.savedReport.category) return conv.savedReport.category;
+  return inferReportCategory(getReportSql(conv), conv.title || '');
+}
+
 function renderMessages() {
   chatInner.querySelectorAll('.message, #typing-row').forEach(el => el.remove());
   const conv = getActive();
-  if (!conv || !conv.messages.length) {
-    welcome.style.display = '';
-    return;
-  }
+  if (!conv || !conv.messages.length) { welcome.style.display = ''; return; }
   welcome.style.display = 'none';
   conv.messages.forEach(m => chatInner.appendChild(buildMsgEl(m.role, m.content)));
   scrollDown();
 }
 
 function buildMsgEl(role, content) {
+  const cssRole = role === 'assistant' ? 'ai' : role;
   const el = document.createElement('div');
-  el.className = `message ${role}`;
+  el.className = `message ${cssRole}`;
+  const bubbleContent = role === 'assistant' ? processAIContent(content) : escapeHTML(content);
   el.innerHTML = `
     <div class="message-header">
-      <div class="avatar ${role}">${role === 'ai' ? 'AI' : 'U'}</div>
-      <span class="message-sender">${role === 'ai' ? 'PW Report Builder' : 'You'}</span>
+      <div class="avatar ${cssRole}">${role === 'assistant' ? 'AI' : 'U'}</div>
+      <span class="message-sender">${role === 'assistant' ? 'PW Report Builder' : 'You'}</span>
     </div>
     <div class="message-body">
-      <div class="bubble">${role === 'ai' ? content : escapeHTML(content)}</div>
+      <div class="bubble">${bubbleContent}</div>
     </div>`;
   return el;
+}
+
+/* ── Stream preview helper ──────────────────────────── */
+
+// Strips markdown syntax from the streaming preview so asterisks never show raw.
+// The fully-rendered version replaces this on onDone via processAIContent.
+function stripStreamPreview(text) {
+  const stops = [
+    text.indexOf('<reasoning>'),
+    text.search(/```sql/i),
+    text.toLowerCase().indexOf('<pw-options>'),
+  ].filter(i => i >= 0);
+  const cut = stops.length > 0 ? text.slice(0, Math.min(...stops)).trimEnd() : text;
+  return cut
+    .replace(/\*\*([^*\n]+)\*\*/g, '$1')
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/`([^`\n]+)`/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .trim();
+}
+
+/* ── AI content processing ──────────────────────────── */
+
+// SQL is stripped and lives in the panel only — never rendered in the bubble.
+function processAIContent(raw) {
+  const opt = extractPwOptions(raw);
+  const { text, sql, reasoning } = extractSQL(opt.text);
+  let html = '';
+  if (reasoning) html += buildReasoningBlock(reasoning);
+  html += marked.parse(text);
+  if (sql) html += `<button class="btn-view-sql" onclick="openActiveSQLPanel()">View SQL &rarr;</button>`;
+  if (!advisorMode && opt.options && opt.options.length >= 3) {
+    html += buildPwClarificationOptions(opt.options);
+  }
+  return html;
+}
+
+/** Renders structured clarification chips (build mode only — caller checks advisorMode). */
+function buildPwClarificationOptions(items) {
+  const buttons = items
+    .filter(o => o && (o.submit || o.label))
+    .map(o => {
+      const submit = String(o.submit || o.label || '').trim();
+      const label = escapeHTML(String(o.label || 'Option').trim());
+      const detail = o.detail ? `<span class="pw-option-detail">${escapeHTML(String(o.detail))}</span>` : '';
+      const enc = encodeURIComponent(submit);
+      return `<button type="button" class="pw-option-btn" data-q="${escapeAttr(enc)}" onclick="pwOptionClick(this)"><span class="pw-option-label">${label}</span>${detail}</button>`;
+    })
+    .join('');
+  if (!buttons) return '';
+  return `<div class="pw-clarify-options" role="group" aria-label="Suggested replies">${buttons}</div>`;
+}
+
+function pwOptionClick(btn) {
+  const enc = btn.getAttribute('data-q');
+  if (!enc) return;
+  try {
+    const q = decodeURIComponent(enc);
+    if (q) submitChip(q);
+  } catch (_) {}
+}
+
+function buildReasoningBlock(reasoning) {
+  const prefs = loadPreferences();
+  const isOpen = !!prefs.reasoningExpanded;
+  const lines = reasoning.split('\n').map(l => l.trim()).filter(Boolean);
+  const rows = lines.map(line => {
+    const colonIdx = line.indexOf(':');
+    if (colonIdx === -1) return '';
+    const key = escapeHTML(line.slice(0, colonIdx).trim());
+    const val = escapeHTML(line.slice(colonIdx + 1).trim());
+    return `<div class="reasoning-row"><span class="reasoning-key">${key}</span><span class="reasoning-val">${val}</span></div>`;
+  }).join('');
+  return `<div class="reasoning-block" data-open="${isOpen}"><button class="reasoning-title" onclick="toggleReasoning(this)">Query Reasoning</button><div class="reasoning-body"><div class="reasoning-body-inner">${rows}</div></div></div>`;
+}
+
+function toggleReasoning(btn) {
+  const block = btn.closest('.reasoning-block');
+  const isOpen = block.getAttribute('data-open') === 'true';
+  block.setAttribute('data-open', isOpen ? 'false' : 'true');
+}
+
+function openActiveSQLPanel() {
+  const conv = getActive();
+  if (conv && hasCompletedReport(conv))
+    openSQLPanel(getReportSql(conv), conv.title, getReportCategoryForMock(conv));
 }
 
 function appendTyping() {
@@ -105,16 +534,792 @@ function appendTyping() {
       <span class="message-sender">PW Report Builder</span>
     </div>
     <div class="message-body">
-      <div class="bubble">
-        <div class="typing">
-          <div class="typing-dot"></div>
-          <div class="typing-dot"></div>
-          <div class="typing-dot"></div>
+      <div class="bubble typing-placeholder-bubble">
+        <div class="typing-pw-stack" aria-hidden="true">
+          <img class="pw-typing-mark-img" src="assets/pw-logomark-black.svg" width="28" height="28" alt="" decoding="async"
+            onerror="this.onerror=null;this.hidden=true;if(this.nextElementSibling)this.nextElementSibling.classList.add('typing-pw-fallback--visible')">
+          <span class="typing-pw-fallback"></span>
         </div>
+        <div class="typing-stream-sink" aria-live="polite"></div>
       </div>
     </div>`;
   chatInner.appendChild(el);
   scrollDown();
+}
+
+function clearTypingRowIfDetached(typingRowEl, aiBubbleEl) {
+  const tr = typingRowEl || document.getElementById('typing-row');
+  if (!tr) return;
+  if (aiBubbleEl && tr.contains(aiBubbleEl)) return;
+  tr.remove();
+}
+
+function clearTypingRowIdFromMessage(aiBubbleEl) {
+  if (!aiBubbleEl || typeof aiBubbleEl.closest !== 'function') return;
+  const row = aiBubbleEl.closest('.message.ai');
+  if (row && row.id === 'typing-row') row.removeAttribute('id');
+}
+
+/* ── Send button state ──────────────────────────────── */
+
+const SEND_ARROW_SVG = `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8.22 2.97a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06l2.97-2.97H3.75a.75.75 0 010-1.5h7.44L8.22 4.03a.75.75 0 010-1.06z"/></svg>`;
+
+function setSendBtnLoading() {
+  sendBtn.disabled = true;
+  sendBtn.innerHTML = '<span class="spin">⟳</span>';
+}
+
+function setSendBtnIdle() {
+  sendBtn.innerHTML = SEND_ARROW_SVG;
+  sendBtn.disabled = inputEl.value.trim().length === 0;
+}
+
+/* ── Error messages ─────────────────────────────────── */
+
+function friendlyError(raw) {
+  if (!raw) return 'Something went wrong. Please try again.';
+  const r = String(raw).toLowerCase();
+  if (r.includes('overloaded') || r.includes('529'))
+    return 'The AI is overloaded right now. Wait a moment and try again.';
+  if (r.includes('rate limit') || r.includes('429'))
+    return 'Rate limit reached. Please wait a moment before sending another message.';
+  if (r.includes('401') || r.includes('unauthorized') || r.includes('api key'))
+    return 'API key error. Check ANTHROPIC_API_KEY in .env.';
+  if (r.includes('network') || r.includes('failed to fetch') || r.includes('econnrefused'))
+    return 'Cannot reach the server. Is it running?';
+  return `Something went wrong: ${raw}`;
+}
+
+/* ── Conversation persistence ───────────────────────── */
+
+function saveConversations() {
+  try {
+    const toSave = conversations.slice(0, 20).map(c => ({
+      id: c.id,
+      title: c.title,
+      messages: c.messages,
+      sql: c.sql || null,
+      reasoning: c.reasoning || null,
+      savedReport: c.savedReport || null,
+      reportLibrarySaved: !!c.reportLibrarySaved,
+      pinned: !!c.pinned,
+    }));
+    localStorage.setItem('pw_conversations', JSON.stringify(toSave));
+    localStorage.setItem('pw_active_id', String(activeId));
+  } catch (_) {}
+  persistUiSnapshot();
+}
+
+function persistUiSnapshot() {
+  try {
+    let libraryFilter = 'All';
+    const chip = document.querySelector('.filter-chip.active');
+    if (chip && chip.dataset.filter) libraryFilter = chip.dataset.filter;
+    localStorage.setItem(
+      UI_SNAPSHOT_KEY,
+      JSON.stringify({
+        v: 1,
+        appView,
+        activeId,
+        detailLibraryId:
+          detailLibraryEntry && detailLibraryEntry.id != null ? detailLibraryEntry.id : null,
+        sqlPanelOpen: sqlPanel.classList.contains('open'),
+        libraryFilter,
+        rdWorkspace: appView === 'report-detail' ? reportDetailWorkspace : null,
+      })
+    );
+  } catch (_) {}
+}
+
+function resetShellToFreshChatLayout() {
+  const lib = document.getElementById('library-mode');
+  if (lib) {
+    lib.classList.remove('lib-visible');
+    lib.style.display = 'none';
+  }
+  const detail = document.getElementById('report-detail-mode');
+  if (detail) {
+    detail.classList.remove('rd-visible');
+    detail.style.display = 'none';
+  }
+  const chatCol = document.getElementById('chat-col');
+  if (chatCol) {
+    chatCol.style.display = '';
+    chatCol.classList.remove('main-fade-out');
+  }
+  sqlPanel.style.display = '';
+}
+
+function hydrateConversation(c) {
+  if (!c.sql && (!c.savedReport || !c.savedReport.sql)) return c;
+  if (!c.savedReport || !c.savedReport.sql) {
+    const question = (c.messages || []).find(m => m.role === 'user')?.content || '';
+    c.savedReport = {
+      sql: c.sql,
+      reasoning: c.reasoning || null,
+      title: c.title,
+      question,
+      category: inferReportCategory(c.sql, c.title || ''),
+      completedAt: null,
+    };
+  }
+  if (c.sql == null && c.savedReport && c.savedReport.sql) {
+    c.sql = c.savedReport.sql;
+    c.reasoning = c.savedReport.reasoning ?? c.reasoning ?? null;
+  }
+  return c;
+}
+
+function restoreUiFromSnapshot(snap) {
+  const lib = document.getElementById('library-mode');
+  const chatCol = document.getElementById('chat-col');
+  const detailEl = document.getElementById('report-detail-mode');
+
+  appView = ['chat', 'library', 'report-detail'].includes(snap.appView) ? snap.appView : 'chat';
+  if (snap.activeId != null && conversations.some(c => c.id === snap.activeId)) {
+    activeId = snap.activeId;
+  } else {
+    activeId = null;
+  }
+  detailLibraryEntry = null;
+  reportDetailWorkspace = snap.rdWorkspace === 'sql' ? 'sql' : 'results';
+
+  if (appView === 'report-detail') {
+    const reports = loadReports();
+    const r = reports.find(x => x.id === snap.detailLibraryId);
+    if (!r) {
+      appView = 'chat';
+      resetShellToFreshChatLayout();
+      sqlPanel.classList.remove('open');
+      resetCopyBtn();
+      const conv = getActive();
+      if (conv && hasCompletedReport(conv)) {
+        prepareSQLPanelContent(getReportSql(conv), conv.title, getReportCategoryForMock(conv));
+        if (snap.sqlPanelOpen) sqlPanel.classList.add('open');
+      }
+      return;
+    }
+    detailLibraryEntry = r;
+    lib.classList.remove('lib-visible');
+    lib.style.display = 'none';
+    chatCol.style.display = 'none';
+    chatCol.classList.remove('main-fade-out');
+    sqlPanel.style.display = 'none';
+    sqlPanel.classList.remove('open');
+    resetCopyBtn();
+    detailEl.style.display = 'flex';
+    detailEl.offsetHeight;
+    detailEl.classList.add('rd-visible');
+    populateReportDetailContent(r);
+    switchReportDetailWorkspace(reportDetailWorkspace, false);
+    return;
+  }
+
+  if (appView === 'library') {
+    detailEl.classList.remove('rd-visible');
+    detailEl.style.display = 'none';
+    chatCol.style.display = 'none';
+    chatCol.classList.remove('main-fade-out');
+    sqlPanel.classList.remove('open');
+    resetCopyBtn();
+    sqlPanel.style.display = 'none';
+    lib.style.display = 'flex';
+    lib.offsetHeight;
+    lib.classList.add('lib-visible');
+    const filter = snap.libraryFilter && typeof snap.libraryFilter === 'string' ? snap.libraryFilter : 'All';
+    filterLibrary(filter);
+    return;
+  }
+
+  resetShellToFreshChatLayout();
+  sqlPanel.classList.remove('open');
+  resetCopyBtn();
+  const conv = getActive();
+  if (conv && hasCompletedReport(conv)) {
+    prepareSQLPanelContent(getReportSql(conv), conv.title, getReportCategoryForMock(conv));
+    if (snap.sqlPanelOpen) sqlPanel.classList.add('open');
+  }
+}
+
+function loadConversations() {
+  purgeExpiredDeletedConversations();
+
+  try {
+    const raw = localStorage.getItem('pw_conversations');
+    if (raw) conversations = JSON.parse(raw);
+  } catch (_) {
+    conversations = [];
+  }
+  conversations.forEach(c => {
+    hydrateConversation(c);
+    if (c.pinned === undefined) c.pinned = false;
+  });
+
+  const tabSessionActive = sessionStorage.getItem(TAB_SESSION_KEY) === '1';
+
+  if (!tabSessionActive) {
+    activeId = null;
+    appView = 'chat';
+    detailLibraryEntry = null;
+    reportDetailWorkspace = 'results';
+    resetShellToFreshChatLayout();
+    sqlPanel.classList.remove('open');
+    resetCopyBtn();
+    renderSidebar();
+    renderMessages();
+    syncSaveReportButtonUI();
+    updateViewReportTab();
+    updateSidebarNavLabels();
+    sessionStorage.setItem(TAB_SESSION_KEY, '1');
+    persistUiSnapshot();
+    return;
+  }
+
+  let snap = null;
+  try {
+    snap = JSON.parse(localStorage.getItem(UI_SNAPSHOT_KEY) || 'null');
+  } catch (_) {
+    snap = null;
+  }
+
+  if (snap && typeof snap === 'object' && snap.v === 1) {
+    restoreUiFromSnapshot(snap);
+  } else {
+    const savedId = Number(localStorage.getItem('pw_active_id'));
+    if (savedId && conversations.find(c => c.id === savedId)) activeId = savedId;
+    else activeId = null;
+    appView = 'chat';
+    detailLibraryEntry = null;
+    reportDetailWorkspace = 'results';
+    resetShellToFreshChatLayout();
+    sqlPanel.classList.remove('open');
+    resetCopyBtn();
+    const conv = getActive();
+    if (conv && hasCompletedReport(conv)) {
+      prepareSQLPanelContent(getReportSql(conv), conv.title, getReportCategoryForMock(conv));
+    }
+  }
+
+  renderSidebar();
+  renderMessages();
+  syncSaveReportButtonUI();
+  updateViewReportTab();
+  updateSidebarNavLabels();
+  persistUiSnapshot();
+}
+
+/* ── Report library ──────────────────────────────────── */
+
+function inferReportCategory(sql, title) {
+  const t = (sql + ' ' + title).toLowerCase();
+  if (/utilisation|utilization|capacity/.test(t))              return 'Utilisation';
+  if (/revenue|invoice|invoiced|billing/.test(t))              return 'Revenue';
+  if (/margin|profit|profitability/.test(t))                   return 'Margin';
+  if (/expense/.test(t))                                       return 'Expenses';
+  if (/timesheet|time\s*entry|hours\s*worked|minutes/.test(t)) return 'Time';
+  if (/person|people|staff|consultant|team/.test(t))           return 'People';
+  if (/project|budget|burn|phase/.test(t))                     return 'Projects';
+  return 'Reports';
+}
+
+function loadReports() {
+  try {
+    return JSON.parse(localStorage.getItem(MANUAL_REPORTS_KEY) || '[]');
+  } catch (_) {
+    return [];
+  }
+}
+
+function saveReportToLibraryManual() {
+  if (appView === 'report-detail') return;
+  const conv = getActive();
+  if (!conv || !hasCompletedReport(conv) || conv.reportLibrarySaved) return;
+
+  const sql = getReportSql(conv);
+  const reasoning = getReportReasoning(conv);
+  const question =
+    (conv.savedReport && conv.savedReport.question) ||
+    (conv.messages || []).find(m => m.role === 'user')?.content ||
+    '';
+  const category = getReportCategoryForMock(conv);
+  const libraryId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const record = {
+    id: libraryId,
+    conversationId: conv.id,
+    title: conv.title,
+    question,
+    sql,
+    reasoning,
+    category,
+    savedAt: new Date().toISOString(),
+  };
+
+  try {
+    const reports = loadReports();
+    reports.unshift(record);
+    localStorage.setItem(MANUAL_REPORTS_KEY, JSON.stringify(reports.slice(0, 50)));
+  } catch (_) {
+    return;
+  }
+
+  conv.reportLibrarySaved = true;
+  saveConversations();
+  syncSaveReportButtonUI();
+}
+
+function syncSaveReportButtonUI() {
+  const btn = document.getElementById('btn-save-report');
+  const msg = document.getElementById('save-report-confirm');
+  if (!btn) return;
+
+  const conv = getActive();
+  const eligible = conv && hasCompletedReport(conv);
+
+  if (!eligible) {
+    btn.disabled = true;
+    btn.textContent = 'Save Report';
+    btn.classList.remove('saved');
+    if (msg) {
+      msg.hidden = true;
+    }
+    return;
+  }
+
+  if (conv.reportLibrarySaved) {
+    btn.disabled = true;
+    btn.textContent = 'Saved ✓';
+    btn.classList.add('saved');
+    if (msg) msg.hidden = false;
+  } else {
+    btn.disabled = false;
+    btn.textContent = 'Save Report';
+    btn.classList.remove('saved');
+    if (msg) msg.hidden = true;
+  }
+}
+
+function updateViewReportTab() {
+  const tab = document.getElementById('view-report-tab');
+  if (!tab) return;
+
+  const lib = document.getElementById('library-mode');
+  const inLibrary =
+    lib &&
+    lib.style.display !== 'none' &&
+    lib.classList.contains('lib-visible');
+
+  const inReportDetail = appView === 'report-detail';
+
+  const conv = getActive();
+  const panelOpen = sqlPanel.classList.contains('open');
+  const show = !inLibrary && !inReportDetail && conv && hasCompletedReport(conv) && !panelOpen;
+
+  tab.hidden = !show;
+  tab.style.display = show ? 'flex' : 'none';
+}
+
+function reopenResultsPanel() {
+  const conv = getActive();
+  if (!hasCompletedReport(conv)) return;
+  openSQLPanel(getReportSql(conv), conv.title, getReportCategoryForMock(conv));
+}
+
+function exitLibraryLayoutToChat() {
+  const lib = document.getElementById('library-mode');
+  lib.classList.remove('lib-visible');
+  setTimeout(() => {
+    lib.style.display = 'none';
+  }, 220);
+
+  const chatCol = document.getElementById('chat-col');
+  if (chatCol) {
+    chatCol.style.display = '';
+    chatCol.classList.add('main-fade-out');
+    chatCol.offsetHeight;
+    requestAnimationFrame(() => {
+      chatCol.classList.remove('main-fade-out');
+    });
+  }
+
+  sqlPanel.style.display = '';
+}
+
+function switchToLibrary() {
+  if (appView === 'report-detail') {
+    leaveReportDetailShell();
+  }
+  appView = 'library';
+
+  const chatCol = document.getElementById('chat-col');
+  if (chatCol) {
+    chatCol.classList.add('main-fade-out');
+    chatCol.offsetHeight;
+    setTimeout(() => {
+      chatCol.style.display = 'none';
+      chatCol.classList.remove('main-fade-out');
+    }, 220);
+  }
+  sqlPanel.classList.remove('open');
+  sqlPanel.style.display = 'none';
+  const lib = document.getElementById('library-mode');
+  lib.style.display = 'flex';
+  lib.offsetHeight;
+  lib.classList.add('lib-visible');
+  filterLibrary('All');
+  updateViewReportTab();
+  updateSidebarNavLabels();
+}
+
+function switchToChat() {
+  if (appView === 'report-detail') {
+    leaveReportDetailShell();
+  }
+  appView = 'chat';
+  exitLibraryLayoutToChat();
+  const conv = getActive();
+  if (conv && hasCompletedReport(conv)) {
+    prepareSQLPanelContent(getReportSql(conv), conv.title, getReportCategoryForMock(conv));
+    sqlPanel.classList.remove('open');
+    resetCopyBtn();
+    persistUiSnapshot();
+  } else {
+    closeSQLPanel();
+  }
+  syncSaveReportButtonUI();
+  updateViewReportTab();
+  updateSidebarNavLabels();
+  inputEl.focus();
+}
+
+function filterLibrary(filter) {
+  document.querySelectorAll('.filter-chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.filter === filter);
+  });
+  const all = loadReports();
+  const filtered = filter === 'All' ? all : all.filter(r => r.category === filter);
+  renderReportList(filtered, filter);
+  persistUiSnapshot();
+}
+
+function renderReportList(reports, filter) {
+  const listEl = document.getElementById('library-list');
+  if (!listEl) return;
+  if (!reports.length) {
+    listEl.innerHTML = `
+      <div class="library-empty">
+        <div class="library-empty-icon">
+          <svg width="32" height="32" viewBox="0 0 16 16" fill="currentColor" opacity="0.3">
+            <path d="M0 2.5A1.5 1.5 0 011.5 1h8.75a.75.75 0 010 1.5H1.5a.5.5 0 00-.5.5v10a.5.5 0 00.5.5h10a.5.5 0 00.5-.5V8.75a.75.75 0 011.5 0V13.5a2 2 0 01-2 2h-10a2 2 0 01-2-2V2.5z"/>
+            <path d="M5 7.5a.75.75 0 01.75-.75h4.5a.75.75 0 010 1.5h-4.5A.75.75 0 015 7.5zm0 3a.75.75 0 01.75-.75h4.5a.75.75 0 010 1.5h-4.5A.75.75 0 015 10.5zM12.5 2.5a2 2 0 114 0 2 2 0 01-4 0z"/>
+          </svg>
+        </div>
+        <p class="library-empty-title">No reports${filter !== 'All' ? ` in ${filter}` : ''} yet</p>
+        <p class="library-empty-sub">Start a conversation to build your first report.</p>
+        <button class="btn-empty-new" onclick="switchToChat(); newReport();">
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z"/></svg>
+          New Report
+        </button>
+      </div>`;
+    return;
+  }
+  listEl.innerHTML = reports.map(r => {
+    const date = new Date(r.savedAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+    return `
+      <div class="report-card" onclick='openReportFromLibrary(${JSON.stringify(r.id)})'>
+        <div class="report-card-icon">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M0 2.5A1.5 1.5 0 011.5 1h8.75a.75.75 0 010 1.5H1.5a.5.5 0 00-.5.5v10a.5.5 0 00.5.5h10a.5.5 0 00.5-.5V8.75a.75.75 0 011.5 0V13.5a2 2 0 01-2 2h-10a2 2 0 01-2-2V2.5zm5.75 3a.75.75 0 000 1.5h4.5a.75.75 0 000-1.5h-4.5zm0 3a.75.75 0 000 1.5h4.5a.75.75 0 000-1.5h-4.5z"/>
+          </svg>
+        </div>
+        <div class="report-card-body">
+          <div class="report-card-title">${escapeHTML(r.title)}</div>
+          <div class="report-card-meta">${escapeHTML(date)}</div>
+        </div>
+        <div class="report-card-tag">${escapeHTML(r.category)}</div>
+      </div>`;
+  }).join('');
+}
+
+function leaveReportDetailShell() {
+  const detail = document.getElementById('report-detail-mode');
+  if (detail) {
+    detail.classList.remove('rd-visible');
+    detail.style.display = 'none';
+  }
+  detailLibraryEntry = null;
+  reportDetailWorkspace = 'results';
+}
+
+function updateSidebarNavLabels() {
+  const label = document.getElementById('sidebar-main-nav-label');
+  const btn = document.getElementById('btn-sidebar-main-nav');
+  if (!label || !btn) return;
+  if (appView === 'chat') {
+    label.textContent = 'View All Reports';
+    btn.title = 'All reports';
+  } else {
+    label.textContent = 'Return to Chat';
+    btn.title = 'Return to chat';
+  }
+}
+
+function handleSidebarMainNav() {
+  if (appView === 'chat') switchToLibrary();
+  else returnToChatFromSidebar();
+}
+
+function returnToChatFromSidebar() {
+  if (appView === 'report-detail') {
+    returnToChatFromReportDetail();
+    return;
+  }
+  if (appView === 'library') {
+    switchToChat();
+  }
+}
+
+function switchReportDetailWorkspace(mode, doPersist = true) {
+  reportDetailWorkspace = mode === 'sql' ? 'sql' : 'results';
+  const resultsView = document.getElementById('rd-panel-results');
+  const sqlView = document.getElementById('rd-panel-sql');
+  const btnRes = document.getElementById('rd-ws-results');
+  const btnSql = document.getElementById('rd-ws-sql');
+  if (!resultsView || !sqlView) return;
+  if (reportDetailWorkspace === 'results') {
+    resultsView.style.display = '';
+    sqlView.style.display = 'none';
+    btnRes?.classList.add('active');
+    btnSql?.classList.remove('active');
+    btnRes?.setAttribute('aria-selected', 'true');
+    btnSql?.setAttribute('aria-selected', 'false');
+  } else {
+    resultsView.style.display = 'none';
+    sqlView.style.display = '';
+    btnRes?.classList.remove('active');
+    btnSql?.classList.add('active');
+    btnRes?.setAttribute('aria-selected', 'false');
+    btnSql?.setAttribute('aria-selected', 'true');
+  }
+  if (doPersist) persistUiSnapshot();
+}
+
+function syncDetailReportSaveUI() {
+  const btn = document.getElementById('rd-btn-save-report');
+  const msg = document.getElementById('rd-save-report-confirm');
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = 'Saved ✓';
+  btn.classList.add('saved');
+  if (msg) msg.hidden = false;
+}
+
+function buildSeededReportAssistantRaw(r, question) {
+  const title = r.title || 'this report';
+  let reasoningBlock;
+  if (r.reasoning && String(r.reasoning).trim()) {
+    reasoningBlock = `<reasoning>\n${String(r.reasoning).trim()}\n</reasoning>\n\n`;
+  } else {
+    const qLine = question || 'Saved report from My Reports';
+    reasoningBlock = `<reasoning>\nQuestion interpreted as: ${qLine}\nTables being queried: (see SQL)\nFilters applied: —\nDate logic used: —\nPotential data gotchas: —\n</reasoning>\n\n`;
+  }
+  const intro = `Would you like to continue working on ${escapeHTML(title)}?\n\nI've pulled in your saved report from My Reports so you can refine it here.`;
+  return `${reasoningBlock}${intro}\n\n\`\`\`sql\n${r.sql}\n\`\`\``;
+}
+
+function returnToChatFromReportDetail() {
+  const r = detailLibraryEntry;
+  leaveReportDetailShell();
+  appView = 'chat';
+
+  exitLibraryLayoutToChat();
+  const chatColReveal = document.getElementById('chat-col');
+  if (chatColReveal) {
+    chatColReveal.classList.add('rd-reveal-from-detail');
+    setTimeout(() => chatColReveal.classList.remove('rd-reveal-from-detail'), 450);
+  }
+
+  if (r) {
+    const cid = r.conversationId;
+    const existing = cid != null && conversations.some(c => c.id === cid);
+
+    if (existing) {
+      activeId = cid;
+      renderSidebar();
+      renderMessages();
+      saveConversations();
+    } else {
+      const id = Date.now();
+      const cat = r.category || inferReportCategory(r.sql, r.title || '');
+      const question = r.question || '';
+      const raw = buildSeededReportAssistantRaw(r, question);
+      const extracted = extractSQL(raw);
+      conversations.unshift({
+        id,
+        title: r.title || generateTitle(question || 'Report'),
+        messages: [{ role: 'assistant', content: raw }],
+        sql: extracted.sql || r.sql,
+        reasoning: extracted.reasoning ?? (r.reasoning || null),
+        savedReport: {
+          sql: r.sql,
+          reasoning: r.reasoning || null,
+          title: r.title,
+          question,
+          category: cat,
+          completedAt: r.savedAt || new Date().toISOString(),
+        },
+        reportLibrarySaved: true,
+      });
+      activeId = id;
+      renderSidebar();
+      renderMessages();
+      saveConversations();
+    }
+  }
+
+  const conv = getActive();
+  if (conv && hasCompletedReport(conv)) {
+    prepareSQLPanelContent(getReportSql(conv), conv.title, getReportCategoryForMock(conv));
+    sqlPanel.classList.remove('open');
+    resetCopyBtn();
+    persistUiSnapshot();
+  } else {
+    closeSQLPanel();
+  }
+  syncSaveReportButtonUI();
+  updateViewReportTab();
+  updateSidebarNavLabels();
+  inputEl.focus();
+}
+
+function switchFromReportDetailToLibrary() {
+  leaveReportDetailShell();
+  appView = 'library';
+
+  const chatCol = document.getElementById('chat-col');
+  if (chatCol) {
+    chatCol.style.display = 'none';
+    chatCol.classList.remove('main-fade-out');
+  }
+
+  sqlPanel.classList.remove('open');
+  sqlPanel.style.display = 'none';
+
+  const lib = document.getElementById('library-mode');
+  lib.style.display = 'flex';
+  lib.offsetHeight;
+  lib.classList.add('lib-visible');
+
+  const activeChip = document.querySelector('.filter-chip.active');
+  const filter = activeChip && activeChip.dataset.filter ? activeChip.dataset.filter : 'All';
+  filterLibrary(filter);
+
+  updateSidebarNavLabels();
+  updateViewReportTab();
+}
+
+function populateReportDetailContent(r) {
+  document.getElementById('rd-title').textContent = r.title || 'Report';
+  const kicker = document.getElementById('rd-category-line');
+  if (kicker) {
+    const cat = r.category || inferReportCategory(r.sql, r.title || '');
+    kicker.textContent = cat;
+  }
+  const cat = r.category || inferReportCategory(r.sql, r.title || '');
+  const data = generateMockData(r.sql, cat);
+  renderResultsTable(data, document.getElementById('rd-thead-row'), document.getElementById('rd-tbody'));
+
+  const rdPre = document.getElementById('rd-sql-output');
+  rdPre.innerHTML = highlightSQL(r.sql);
+  rdPre._rawSQL = r.sql;
+
+  resetRdCopyBtn();
+  syncDetailReportSaveUI();
+}
+
+function openReportFromLibrary(libraryId) {
+  const reports = loadReports();
+  const r = reports.find(x => x.id === libraryId);
+  if (!r) return;
+
+  detailLibraryEntry = r;
+  appView = 'report-detail';
+  reportDetailWorkspace = 'results';
+
+  const lib = document.getElementById('library-mode');
+  lib.classList.remove('lib-visible');
+  setTimeout(() => {
+    lib.style.display = 'none';
+  }, 220);
+
+  const chatCol = document.getElementById('chat-col');
+  if (chatCol) {
+    chatCol.style.display = 'none';
+    chatCol.classList.remove('main-fade-out');
+  }
+
+  sqlPanel.classList.remove('open');
+  sqlPanel.style.display = 'none';
+
+  const detail = document.getElementById('report-detail-mode');
+  detail.style.display = 'flex';
+  detail.offsetHeight;
+  detail.classList.add('rd-visible');
+
+  populateReportDetailContent(r);
+  switchReportDetailWorkspace('results', false);
+  updateSidebarNavLabels();
+  updateViewReportTab();
+  persistUiSnapshot();
+}
+
+function copyReportDetailSql() {
+  const rdPre = document.getElementById('rd-sql-output');
+  const btn = document.getElementById('rd-btn-copy-sql');
+  const raw = (rdPre && rdPre._rawSQL) || (rdPre && rdPre.textContent) || '';
+  if (!raw) return;
+  navigator.clipboard.writeText(raw).then(() => {
+    if (!btn) return;
+    btn.classList.add('copied');
+    btn.innerHTML = iconCheck() + ' Copied!';
+    setTimeout(() => {
+      btn.classList.remove('copied');
+      resetRdCopyBtn();
+    }, 2000);
+  });
+}
+
+function resetRdCopyBtn() {
+  const btn = document.getElementById('rd-btn-copy-sql');
+  if (btn) btn.innerHTML = iconCopy() + ' Copy SQL';
+}
+
+function downloadReportFromDetail() {
+  const r = detailLibraryEntry;
+  if (!r || !r.sql) return;
+
+  const title = r.title || 'Report';
+  const now = new Date();
+  const timestamp = now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  const dateSlug = now.toISOString().slice(0, 10);
+  const fileSlug = title.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'report';
+  const filename = `${fileSlug}-${dateSlug}.sql.txt`;
+
+  const reasoningText = r.reasoning || null;
+  const hr = '-'.repeat(48);
+  let out = `PW Report Builder — Report Export\n${hr}\nReport:    ${title}\nGenerated: ${timestamp}\n`;
+  if (reasoningText) {
+    out += `\n${hr}\nQUERY REASONING\n${hr}\n`;
+    reasoningText.split('\n').map(l => l.trim()).filter(Boolean).forEach(l => { out += `${l}\n`; });
+  }
+  out += `\n${hr}\nSQL QUERY\n${hr}\n${r.sql}\n`;
+
+  const blob = new Blob([out], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 /* ── Send ───────────────────────────────────────────── */
@@ -125,105 +1330,189 @@ function sendMessage() {
 
   const isFirst = activeId === null;
 
-  // Create a new conversation on the first message
   if (isFirst) {
     const id = Date.now();
-    conversations.unshift({ id, title: generateTitle(text), messages: [], sql: null });
+    conversations.unshift({
+      id,
+      title: generateTitle(text),
+      messages: [],
+      sql: null,
+      savedReport: null,
+      reportLibrarySaved: false,
+    });
     activeId = id;
     renderSidebar();
   }
 
   const conv = getActive();
   conv.messages.push({ role: 'user', content: text });
+  saveConversations();
 
   inputEl.value = '';
   inputEl.style.height = 'auto';
-  sendBtn.disabled = true;
+  setSendBtnLoading();
 
   welcome.style.display = 'none';
   chatInner.appendChild(buildMsgEl('user', text));
   scrollDown();
-
   appendTyping();
 
-  // Generate a better title via AI after the first message (fire-and-forget)
   if (isFirst) {
     generateTitleWithAI(text).then(title => {
       if (title && activeId === conv.id) {
         conv.title = title;
+        if (conv.savedReport) conv.savedReport.title = title;
         renderSidebar();
-        if (sqlPanel.classList.contains('open')) {
+        saveConversations();
+        if (sqlPanel.classList.contains('open'))
           document.getElementById('sql-panel-name').textContent = title;
-        }
       }
     }).catch(() => {});
   }
 
-  // Streaming state
   let aiBubble = null;
+  let streamAccumulated = '';
 
   sendToAI(conv.messages, {
+    advisorMode,
     onChunk(chunk) {
-      // On the first chunk, swap typing indicator for a live bubble
       if (!aiBubble) {
-        document.getElementById('typing-row')?.remove();
-        const msgEl = buildMsgEl('ai', '');
-        aiBubble = msgEl.querySelector('.bubble');
-        chatInner.appendChild(msgEl);
+        const typingRow = document.getElementById('typing-row');
+        const bubble = typingRow && typingRow.querySelector('.bubble.typing-placeholder-bubble');
+        if (bubble) {
+          aiBubble = bubble;
+          const stack = bubble.querySelector('.typing-pw-stack');
+          const sink = bubble.querySelector('.typing-stream-sink');
+          if (stack) stack.classList.add('typing-pw-stack--exit');
+          if (sink) sink.classList.add('typing-stream-sink--visible');
+          let stackRemoved = false;
+          const removeStack = () => {
+            if (stackRemoved || !stack || !stack.parentNode) return;
+            stackRemoved = true;
+            stack.remove();
+          };
+          if (stack) {
+            stack.addEventListener('transitionend', removeStack, { once: true });
+            setTimeout(removeStack, 280);
+          }
+        } else {
+          clearTypingRowIfDetached(typingRow, null);
+          const msgEl = buildMsgEl('assistant', '');
+          aiBubble = msgEl.querySelector('.bubble');
+          chatInner.appendChild(msgEl);
+        }
       }
-      aiBubble.textContent = (aiBubble.textContent || '') + chunk;
+      streamAccumulated += chunk;
+      // Show only plain text before <reasoning> or ```sql — never show raw SQL or markdown tags
+      const stops = [
+        streamAccumulated.indexOf('<reasoning>'),
+        streamAccumulated.search(/```sql/i),
+        streamAccumulated.toLowerCase().indexOf('<pw-options>'),
+      ].filter(i => i >= 0);
+      const rawPreview = stops.length > 0
+        ? streamAccumulated.slice(0, Math.min(...stops)).trimEnd()
+        : streamAccumulated;
+      const preview = stripStreamPreview(rawPreview);
+      const sink = aiBubble && aiBubble.querySelector('.typing-stream-sink');
+      if (sink && sink.classList.contains('typing-stream-sink--visible')) {
+        sink.textContent = preview;
+      } else {
+        aiBubble.textContent = preview;
+      }
       scrollDown();
     },
 
-    onDone({ text, sql, raw }) {
-      // Remove typing indicator if no chunks arrived (e.g. very fast response)
-      document.getElementById('typing-row')?.remove();
+    onDone({ sql, reasoning, raw }) {
+      clearTypingRowIfDetached(null, aiBubble);
+
+      if (!raw.trim()) {
+        const emptyRow = aiBubble && aiBubble.closest ? aiBubble.closest('.message.ai') : null;
+        if (emptyRow) emptyRow.remove();
+        else document.getElementById('typing-row')?.remove();
+        chatInner.appendChild(buildMsgEl('assistant', `<span class="empty-state-hint">No response received. Please try rephrasing your question.</span>`));
+        setSendBtnIdle(); scrollDown(); return;
+      }
 
       if (aiBubble) {
-        // Replace streamed plain text with final formatted HTML
-        aiBubble.innerHTML = text;
+        aiBubble.innerHTML = processAIContent(raw);
       } else {
-        chatInner.appendChild(buildMsgEl('ai', text));
+        chatInner.appendChild(buildMsgEl('assistant', raw));
       }
+      clearTypingRowIdFromMessage(aiBubble);
 
-      // Store the full raw response so the model sees its own SQL in future turns
-      conv.messages.push({ role: 'ai', content: raw });
+      conv.messages.push({ role: 'assistant', content: raw });
 
       if (sql) {
+        conv.reportLibrarySaved = false;
+        const question = (conv.messages || []).find(m => m.role === 'user')?.content || '';
+        const category = inferReportCategory(sql, conv.title);
+        conv.savedReport = {
+          sql,
+          reasoning: reasoning || null,
+          title: conv.title,
+          question,
+          category,
+          completedAt: new Date().toISOString(),
+        };
         conv.sql = sql;
-        openSQLPanel(sql, conv.title);
+        conv.reasoning = reasoning || null;
+        openSQLPanel(sql, conv.title, category);
       }
 
-      // Re-enable input
-      sendBtn.disabled = inputEl.value.trim().length === 0;
+      saveConversations();
+      setSendBtnIdle();
       scrollDown();
     },
 
     onError(errMsg) {
-      document.getElementById('typing-row')?.remove();
-      const msgEl = buildMsgEl('ai',
-        `<span style="color:#A31515">Something went wrong: ${escapeHTML(errMsg)}</span>`
-      );
-      chatInner.appendChild(msgEl);
-      sendBtn.disabled = inputEl.value.trim().length === 0;
-      scrollDown();
+      const errRow = aiBubble && aiBubble.closest ? aiBubble.closest('.message.ai') : null;
+      if (errRow) errRow.remove();
+      else document.getElementById('typing-row')?.remove();
+      chatInner.appendChild(buildMsgEl('assistant', `<span class="error-bubble">${escapeHTML(friendlyError(errMsg))}</span>`));
+      setSendBtnIdle(); scrollDown();
     },
   });
 }
 
 /* ── SQL Panel ──────────────────────────────────────── */
 
-function openSQLPanel(sql, title) {
+function prepareSQLPanelContent(sql, title, categoryOpt) {
   document.getElementById('sql-panel-name').textContent = title || 'SQL Output';
   sqlOutput.innerHTML = highlightSQL(sql);
   sqlOutput._rawSQL = sql;
+  const category = categoryOpt || inferReportCategory(sql, title || '');
+  renderResultsTable(generateMockData(sql, category));
+  switchPanelTab('results');
+  syncSaveReportButtonUI();
+}
+
+function openSQLPanel(sql, title, categoryOpt) {
+  prepareSQLPanelContent(sql, title, categoryOpt);
   sqlPanel.classList.add('open');
+  updateViewReportTab();
+  persistUiSnapshot();
 }
 
 function closeSQLPanel() {
   sqlPanel.classList.remove('open');
   resetCopyBtn();
-  document.getElementById('metabase-guide').style.display = 'none';
+  updateViewReportTab();
+  persistUiSnapshot();
+}
+
+function switchPanelTab(tabName) {
+  const resultsView = document.getElementById('panel-results-view');
+  const sqlView     = document.getElementById('panel-sql-view');
+  const tabResults  = document.getElementById('tab-results');
+  const tabSQL      = document.getElementById('tab-sql');
+  if (!resultsView || !sqlView) return;
+  if (tabName === 'results') {
+    resultsView.style.display = ''; sqlView.style.display     = 'none';
+    tabResults?.classList.add('active'); tabSQL?.classList.remove('active');
+  } else {
+    resultsView.style.display = 'none'; sqlView.style.display     = '';
+    tabResults?.classList.remove('active'); tabSQL?.classList.add('active');
+  }
 }
 
 function copySQLPanel() {
@@ -241,9 +1530,219 @@ function resetCopyBtn() {
   if (btn) btn.innerHTML = iconCopy() + ' Copy SQL';
 }
 
-function toggleMetabaseGuide() {
-  const guide = document.getElementById('metabase-guide');
-  guide.style.display = guide.style.display === 'none' ? 'flex' : 'none';
+/* ── Mock results data ───────────────────────────────── */
+
+// Placeholder results preview — not real query output.
+// TODO: Replace with live SQL execution once DB_HOST is configured in .env
+// and the /api/execute endpoint is implemented in server.js.
+
+const MOCK = {
+  months:   ['Jan 2026','Feb 2026','Mar 2026','Apr 2026','May 2026','Jun 2026'],
+  clients:  ['Meridian Health Group','Pacific Infrastructure Ltd','BlueStar Financial Services','TechCore Solutions','Atlas Consulting Group','Nexus Property Group'],
+  projects: ['Digital Transformation Programme','Cloud Migration Phase 2','Operating Model Review','Infrastructure Uplift 2026','Data Analytics Platform','Finance Systems Integration'],
+  persons:  ['Sarah Chen','Michael Torres','Priya Nair','James Robertson','Emma Walsh','David Kim'],
+  teams:    ['Delivery','Data & Analytics','Infrastructure','Strategy & Advisory','Engineering','Design & UX'],
+  statuses: ['Active','Active','Completed','In Progress','Active','On Hold'],
+  pms:      ['James Robertson','Emma Walsh','Priya Nair','James Robertson','Michael Torres','Sarah Chen'],
+};
+
+function generateMockData(sql, category) {
+  if (!sql) return null;
+  const columns = parseSelectColumns(sql);
+  const rows = Array.from({ length: 6 }, (_, i) =>
+    columns.map(col => mockValue(col.toLowerCase(), i, category || 'Reports'))
+  );
+  return { columns, rows };
+}
+
+function parseSelectColumns(sql) {
+  const match = sql.match(/SELECT\s+([\s\S]+?)\s+FROM\s/i);
+  if (!match) return ['Column 1','Column 2','Column 3'];
+  return splitOnCommas(match[1]).map(def => {
+    def = def.trim();
+    const asMatch = def.match(/\bAS\s+\[?([^\]\s,]+)\]?\s*$/i);
+    if (asMatch) return asMatch[1].replace(/[[\]]/g, '');
+    const lastIdent = def.match(/\b([A-Za-z][A-Za-z0-9_]*)\s*$/);
+    return lastIdent ? lastIdent[1].replace(/[[\]]/g, '') : 'Value';
+  }).slice(0, 9);
+}
+
+function splitOnCommas(str) {
+  const result = []; let depth = 0, start = 0;
+  for (let i = 0; i < str.length; i++) {
+    if (str[i] === '(') depth++;
+    else if (str[i] === ')') depth--;
+    else if (str[i] === ',' && depth === 0) { result.push(str.slice(start, i)); start = i + 1; }
+  }
+  result.push(str.slice(start));
+  return result;
+}
+
+function fmtCurrency(n) {
+  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function mockValue(col, i, category) {
+  // Revenue amounts vary by category
+  const revAmounts  = [187500, 94200, 243800, 68400, 156900, 211400];
+  const costAmounts = [112500, 56520, 146280, 41040, 94140, 126840];
+  const budgetAmts  = [215000, 108000, 280000, 78500, 180000, 243000];
+  const hours       = [152.5, 98.0, 176.5, 63.0, 144.0, 118.5];
+  const capacity    = [168.0, 168.0, 152.0, 176.0, 160.0, 168.0];
+  const utilPct     = ['90.8%','58.3%','116.1%','35.8%','90.0%','70.5%'];
+
+  if (/month|period|monthstart|weekstart/.test(col)) return MOCK.months[i % 6];
+  if (/client|company|account/.test(col))            return MOCK.clients[i % 6];
+  if (/project|job|engagement/.test(col))            return MOCK.projects[i % 6];
+  if (/team/.test(col))                              return MOCK.teams[i % 6];
+  if (/status/.test(col))                            return MOCK.statuses[i % 6];
+  if (/manager|pm|accountmanager/.test(col))         return MOCK.pms[i % 6];
+  if (/person|name|consultant|staff|engineer/.test(col) && !/company|project/.test(col)) return MOCK.persons[i % 6];
+  if (/util|pct|percent/.test(col))                  return utilPct[i % 6];
+  if (/revenue|invoiced|beforetax/.test(col))        return fmtCurrency(revAmounts[i % 6]);
+  if (/fee(?!budget)|billed/.test(col))              return fmtCurrency(revAmounts[i % 6]);
+  if (/budgetfee|feebudget/.test(col))               return fmtCurrency(budgetAmts[i % 6]);
+  if (/budget(?!fee)/.test(col))                     return fmtCurrency(budgetAmts[i % 6]);
+  if (/cost/.test(col) && !/timecode/.test(col))     return fmtCurrency(costAmounts[i % 6]);
+  if (/margin|profit/.test(col))                     return fmtCurrency(revAmounts[i % 6] - costAmounts[i % 6]);
+  if (/capacit|workhour|avail/.test(col))            return capacity[i % 6].toFixed(1);
+  if (/hour|minute|time|worked|logged/.test(col))    return hours[i % 6].toFixed(1);
+  if (/rate/.test(col))                              return fmtCurrency(150 + i * 25);
+  if (/count|num|qty|invoice(?!d)/.test(col))        return 2 + i;
+  if (/date|invoicedate/.test(col))                  return MOCK.months[i % 6];
+  if (/remaining|unspent/.test(col))                 return fmtCurrency(budgetAmts[i % 6] - revAmounts[i % 6]);
+  return '—';
+}
+
+function isRightAlignCol(colName) {
+  const c = colName.toLowerCase().replace(/[^a-z]/g, '');
+  return /revenue|invoiced|fee|amount|cost|margin|profit|budget|rate|hour|minute|time|util|pct|percent|count|num|qty|remaining|capacity|worked|logged/.test(c);
+}
+
+function renderResultsTable(data, theadEl, tbodyEl) {
+  currentMockData = data; // store for full screen view and CSV export
+  const thead = theadEl || document.getElementById('results-thead-row');
+  const tbody = tbodyEl || document.getElementById('results-tbody');
+  if (!thead || !tbody || !data) return;
+
+  thead.innerHTML = data.columns.map(c =>
+    `<th class="${isRightAlignCol(c) ? 'num' : ''}">${escapeHTML(c)}</th>`
+  ).join('');
+
+  tbody.innerHTML = data.rows.map((row, ri) =>
+    `<tr>${row.map((cell, ci) =>
+      `<td class="${isRightAlignCol(data.columns[ci]) ? 'num' : ''}">${escapeHTML(String(cell))}</td>`
+    ).join('')}</tr>`
+  ).join('');
+}
+
+/* ── Metabase modal ──────────────────────────────────── */
+
+// TODO: Replace openMetabaseModal's "Open Metabase" action with an actual
+// deep-link to the target Metabase collection/dashboard once the DB
+// connection and Metabase API integration are live.
+
+function openMetabaseModal() {
+  const modal = document.getElementById('metabase-modal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  requestAnimationFrame(() => modal.classList.add('modal-visible'));
+}
+
+function closeMetabaseModal() {
+  const modal = document.getElementById('metabase-modal');
+  if (!modal) return;
+  modal.classList.remove('modal-visible');
+  setTimeout(() => { modal.style.display = 'none'; }, 220);
+}
+
+/* ── Full screen report modal ───────────────────────── */
+
+function openFullScreenReport() {
+  const modal = document.getElementById('fullscreen-report-modal');
+  if (!modal) return;
+
+  document.getElementById('fs-report-title').textContent =
+    document.getElementById('sql-panel-name').textContent || 'Report';
+
+  const fsThead = document.getElementById('fs-thead-row');
+  const fsTbody = document.getElementById('fs-tbody');
+  if (currentMockData && fsThead && fsTbody) {
+    fsThead.innerHTML = currentMockData.columns.map(c =>
+      `<th class="${isRightAlignCol(c) ? 'num' : ''}">${escapeHTML(c)}</th>`
+    ).join('');
+    fsTbody.innerHTML = currentMockData.rows.map(row =>
+      `<tr>${row.map((cell, ci) =>
+        `<td class="${isRightAlignCol(currentMockData.columns[ci]) ? 'num' : ''}">${escapeHTML(String(cell))}</td>`
+      ).join('')}</tr>`
+    ).join('');
+  }
+
+  modal.style.display = 'flex';
+  requestAnimationFrame(() => modal.classList.add('fs-visible'));
+}
+
+function closeFullScreenReport() {
+  const modal = document.getElementById('fullscreen-report-modal');
+  if (!modal) return;
+  modal.classList.remove('fs-visible');
+  setTimeout(() => { modal.style.display = 'none'; }, 220);
+}
+
+// TODO: When live-connected, this exports real query results
+function exportCSV() {
+  if (!currentMockData) return;
+  let title = 'Report';
+  if (appView === 'report-detail' && detailLibraryEntry) {
+    title = detailLibraryEntry.title || title;
+  } else {
+    const conv = getActive();
+    title = (conv && conv.title) || document.getElementById('sql-panel-name').textContent || 'Report';
+  }
+  const dateSlug = new Date().toISOString().slice(0, 10);
+  const fileSlug = title.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'report';
+  const filename = `${fileSlug}-${dateSlug}.csv`;
+
+  const { columns, rows } = currentMockData;
+  const csvContent = [columns, ...rows]
+    .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ── Download report ────────────────────────────────── */
+
+function downloadReport() {
+  const conv = getActive();
+  const sql = getReportSql(conv);
+  if (!conv || !sql) return;
+
+  const title     = conv.title || 'Report';
+  const now       = new Date();
+  const timestamp = now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  const dateSlug  = now.toISOString().slice(0, 10);
+  const fileSlug  = title.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'report';
+  const filename  = `${fileSlug}-${dateSlug}.sql.txt`;
+
+  const reasoningText = getReportReasoning(conv);
+  const hr = '-'.repeat(48);
+  let out  = `PW Report Builder — Report Export\n${hr}\nReport:    ${title}\nGenerated: ${timestamp}\n`;
+  if (reasoningText) {
+    out += `\n${hr}\nQUERY REASONING\n${hr}\n`;
+    reasoningText.split('\n').map(l => l.trim()).filter(Boolean).forEach(l => { out += `${l}\n`; });
+  }
+  out += `\n${hr}\nSQL QUERY\n${hr}\n${sql}\n`;
+
+  const blob = new Blob([out], { type: 'text/plain;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
 }
 
 function iconCopy() {
@@ -267,10 +1766,8 @@ function highlightSQL(sql) {
     'CAST','CONVERT','OVER','PARTITION','ROW_NUMBER','RANK','DENSE_RANK',
     'NTILE','LAG','LEAD','FIRST_VALUE','LAST_VALUE','ROWS','RANGE',
     'UNBOUNDED','PRECEDING','FOLLOWING','CURRENT','ROW','ASC','DESC',
-    'CTE','RECURSIVE','PIVOT','UNPIVOT','APPLY','CROSS APPLY','OUTER APPLY',
-    'NOLOCK','WITH','NOLOCK','ISNULL','COALESCE','NULLIF','IIF'
+    'CTE','RECURSIVE','PIVOT','UNPIVOT','APPLY','NOLOCK','ISNULL','COALESCE','NULLIF','IIF'
   ]);
-
   const FUNCTIONS = new Set([
     'SUM','COUNT','AVG','MIN','MAX','ROUND','ABS','CEILING','FLOOR',
     'ISNULL','COALESCE','NULLIF','IIF','CAST','CONVERT','LEN','LEFT',
@@ -279,34 +1776,18 @@ function highlightSQL(sql) {
     'ROW_NUMBER','RANK','DENSE_RANK','NTILE','LAG','LEAD',
     'FIRST_VALUE','LAST_VALUE','STDEV','VAR','STRING_AGG','STUFF','CONCAT'
   ]);
-
-  // Tokenize with sticky regex — processes the string left-to-right without backtracking
-  const tokens = [];
-  let i = 0;
-  const s = sql;
-
+  const tokens = []; let i = 0; const s = sql;
   while (i < s.length) {
-    let m;
-
-    // Single-line comment
     if (s.startsWith('--', i)) {
       const end = s.indexOf('\n', i);
       const t = end === -1 ? s.slice(i) : s.slice(i, end);
-      tokens.push(`<span class="sql-comment">${esc(t)}</span>`);
-      i += t.length;
-      continue;
+      tokens.push(`<span class="sql-comment">${esc(t)}</span>`); i += t.length; continue;
     }
-
-    // Block comment
     if (s.startsWith('/*', i)) {
       const end = s.indexOf('*/', i + 2);
       const t = end === -1 ? s.slice(i) : s.slice(i, end + 2);
-      tokens.push(`<span class="sql-comment">${esc(t)}</span>`);
-      i += t.length;
-      continue;
+      tokens.push(`<span class="sql-comment">${esc(t)}</span>`); i += t.length; continue;
     }
-
-    // String literal (single-quoted)
     if (s[i] === "'") {
       let j = i + 1;
       while (j < s.length) {
@@ -314,42 +1795,24 @@ function highlightSQL(sql) {
         if (s[j] === "'") { j++; break; }
         j++;
       }
-      tokens.push(`<span class="sql-string">${esc(s.slice(i, j))}</span>`);
-      i = j;
-      continue;
+      tokens.push(`<span class="sql-string">${esc(s.slice(i, j))}</span>`); i = j; continue;
     }
-
-    // Number
     if (/[0-9]/.test(s[i]) || (s[i] === '.' && /[0-9]/.test(s[i+1] || ''))) {
       let j = i;
       while (j < s.length && /[0-9.]/.test(s[j])) j++;
-      tokens.push(`<span class="sql-number">${esc(s.slice(i, j))}</span>`);
-      i = j;
-      continue;
+      tokens.push(`<span class="sql-number">${esc(s.slice(i, j))}</span>`); i = j; continue;
     }
-
-    // Word (keyword or function or identifier)
     if (/[A-Za-z_@#]/.test(s[i])) {
       let j = i;
       while (j < s.length && /[A-Za-z0-9_@#]/.test(s[j])) j++;
-      const word = s.slice(i, j);
-      const upper = word.toUpperCase();
-      if (KEYWORDS.has(upper)) {
-        tokens.push(`<span class="sql-keyword">${esc(word)}</span>`);
-      } else if (FUNCTIONS.has(upper)) {
-        tokens.push(`<span class="sql-function">${esc(word)}</span>`);
-      } else {
-        tokens.push(esc(word));
-      }
-      i = j;
-      continue;
+      const word = s.slice(i, j), upper = word.toUpperCase();
+      if (KEYWORDS.has(upper)) tokens.push(`<span class="sql-keyword">${esc(word)}</span>`);
+      else if (FUNCTIONS.has(upper)) tokens.push(`<span class="sql-function">${esc(word)}</span>`);
+      else tokens.push(esc(word));
+      i = j; continue;
     }
-
-    // Anything else — pass through escaped
-    tokens.push(esc(s[i]));
-    i++;
+    tokens.push(esc(s[i])); i++;
   }
-
   return tokens.join('');
 }
 
@@ -399,3 +1862,224 @@ function escapeHTML(s) {
 }
 
 function escapeAttr(s) { return escapeHTML(s); }
+
+/* ── Keyboard shortcuts ──────────────────────────────── */
+
+document.addEventListener('keydown', e => {
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && e.key === 'k') { e.preventDefault(); newReport(); return; }
+  if (e.key === 'Escape' && document.activeElement !== inputEl) {
+    const fsModal = document.getElementById('fullscreen-report-modal');
+    if (fsModal && fsModal.style.display !== 'none') { closeFullScreenReport(); return; }
+    const modal = document.getElementById('metabase-modal');
+    if (modal && modal.style.display !== 'none') closeMetabaseModal();
+    else if (appView === 'report-detail') switchFromReportDetailToLibrary();
+    else closeSQLPanel();
+    return;
+  }
+  if (mod && e.shiftKey && e.key === 'C') {
+    e.preventDefault();
+    if (appView === 'report-detail') {
+      copyReportDetailSql();
+      return;
+    }
+    const conv = getActive();
+    if (conv && hasCompletedReport(conv)) copySQLPanel();
+    return;
+  }
+});
+
+/* ── Settings panel ─────────────────────────────────── */
+
+function openSettings() {
+  const panel = document.getElementById('settings-panel');
+  if (!panel) return;
+  panel.classList.add('settings-open');
+  panel.setAttribute('aria-hidden', 'false');
+  updateSettingsProfileUI();
+  applyPreferencesUI(loadPreferences());
+  const mem = loadMemory();
+  const memTA = document.getElementById('settings-memory');
+  if (memTA) { memTA.value = mem; updateMemoryCounter(); }
+  renderSettingsArchived();
+  renderSettingsDeleted();
+}
+
+function closeSettings() {
+  const panel = document.getElementById('settings-panel');
+  if (!panel) return;
+  panel.classList.remove('settings-open');
+  panel.setAttribute('aria-hidden', 'true');
+}
+
+function getInitials(str) {
+  if (!str) return '?';
+  const parts = str.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return str.slice(0, 2).toUpperCase();
+}
+
+function updateSettingsProfileUI() {
+  if (!pwCurrentUser) return;
+  const email = pwCurrentUser.email || '';
+  const name  = pwCurrentUser.name || email.split('@')[0] || '';
+  const nameEl   = document.getElementById('settings-profile-name');
+  const emailEl  = document.getElementById('settings-profile-email');
+  const avatarEl = document.getElementById('settings-profile-avatar');
+  if (nameEl)   nameEl.textContent  = name;
+  if (emailEl)  emailEl.textContent = email;
+  if (avatarEl) avatarEl.textContent = getInitials(name || email);
+}
+
+function renderSettingsArchived() {
+  const listEl = document.getElementById('settings-archived-list');
+  if (!listEl) return;
+  const arcs = loadArchivedConversations();
+  if (!arcs.length) {
+    listEl.innerHTML = `<p class="settings-empty">No archived conversations</p>`;
+    return;
+  }
+  listEl.innerHTML = arcs.map(c => `
+    <div class="settings-conv-card">
+      <div class="settings-conv-title">${escapeHTML(c.title)}</div>
+      <button type="button" class="btn-settings-restore" onclick="restoreArchivedConversation(${c.id})">Restore</button>
+    </div>`).join('');
+}
+
+function renderSettingsDeleted() {
+  const listEl = document.getElementById('settings-deleted-list');
+  if (!listEl) return;
+  const dels = loadDeletedConversations();
+  if (!dels.length) {
+    listEl.innerHTML = `<p class="settings-empty">No recently deleted conversations</p>`;
+    return;
+  }
+  const now = Date.now();
+  listEl.innerHTML = dels.map(c => {
+    const msLeft = (c.deletedAt + DELETED_PURGE_DAYS * 24 * 60 * 60 * 1000) - now;
+    const daysLeft = Math.max(0, Math.ceil(msLeft / (24 * 60 * 60 * 1000)));
+    const deletedDate = new Date(c.deletedAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+    return `
+      <div class="settings-conv-card">
+        <div class="settings-conv-title">${escapeHTML(c.title)}</div>
+        <div class="settings-conv-meta">Deleted ${deletedDate} · ${daysLeft} day${daysLeft !== 1 ? 's' : ''} remaining</div>
+        <button type="button" class="btn-settings-restore" onclick="restoreDeletedConversation(${c.id})">Restore</button>
+      </div>`;
+  }).join('');
+}
+
+/* ── Preferences (localStorage) ─────────────────────── */
+// NOTE: pw_preferences values will be injected into the system prompt in a future update.
+
+function loadPreferences() {
+  try { return JSON.parse(localStorage.getItem(PREFERENCES_KEY) || '{}'); }
+  catch (_) { return {}; }
+}
+
+function savePreferences() {
+  const dateRange       = document.getElementById('pref-date-range')?.value || '3m';
+  const revenueDef      = document.getElementById('pref-revenue-def')?.value || 'both';
+  const reasoningToggle = document.getElementById('pref-reasoning-toggle');
+  const reasoningExpanded = reasoningToggle?.getAttribute('aria-checked') === 'true';
+  const prefs = { defaultDateRange: dateRange, revenueDefinition: revenueDef, reasoningExpanded };
+  try { localStorage.setItem(PREFERENCES_KEY, JSON.stringify(prefs)); }
+  catch (_) {}
+}
+
+function applyPreferencesUI(prefs) {
+  const dateRangeEl      = document.getElementById('pref-date-range');
+  const revenueDefEl     = document.getElementById('pref-revenue-def');
+  const reasoningToggle  = document.getElementById('pref-reasoning-toggle');
+  if (dateRangeEl && prefs.defaultDateRange)  dateRangeEl.value  = prefs.defaultDateRange;
+  if (revenueDefEl && prefs.revenueDefinition) revenueDefEl.value = prefs.revenueDefinition;
+  if (reasoningToggle) reasoningToggle.setAttribute('aria-checked', String(!!prefs.reasoningExpanded));
+}
+
+function toggleReasoningPref() {
+  const toggle = document.getElementById('pref-reasoning-toggle');
+  if (!toggle) return;
+  const current = toggle.getAttribute('aria-checked') === 'true';
+  toggle.setAttribute('aria-checked', String(!current));
+  savePreferences();
+}
+
+/* ── Memory (localStorage, injected into system prompt) ─ */
+
+function loadMemory() {
+  return localStorage.getItem(USER_MEMORY_KEY) || '';
+}
+
+function saveMemory() {
+  const memTA = document.getElementById('settings-memory');
+  if (!memTA) return;
+  try { localStorage.setItem(USER_MEMORY_KEY, memTA.value.slice(0, 2000)); }
+  catch (_) {}
+  const btn = document.getElementById('btn-save-memory');
+  if (btn) {
+    const orig = btn.textContent;
+    btn.textContent = 'Saved ✓';
+    setTimeout(() => { btn.textContent = orig; }, 1500);
+  }
+}
+
+function updateMemoryCounter() {
+  const memTA   = document.getElementById('settings-memory');
+  const counter = document.getElementById('settings-memory-counter');
+  if (!memTA || !counter) return;
+  counter.textContent = `${memTA.value.length} / 2000`;
+}
+
+/* ── Auth session + preferences (server) ─────────────── */
+
+async function loadAuthSession() {
+  try {
+    const r = await fetch('/api/auth/me', { credentials: 'same-origin' });
+    if (r.status === 401) {
+      window.location.href = '/login';
+      return;
+    }
+    if (!r.ok) return;
+    const data = await r.json();
+    pwCurrentUser = data.user || null;
+    pwPreferences = data.preferences || null;
+    const emailEl = document.getElementById('sidebar-user-email');
+    if (emailEl && pwCurrentUser?.email) {
+      emailEl.textContent = pwCurrentUser.email;
+      emailEl.title = pwCurrentUser.email;
+    }
+    const avatarEl = document.getElementById('sidebar-user-avatar');
+    if (avatarEl && pwCurrentUser) {
+      const name = pwCurrentUser.name || pwCurrentUser.email || '';
+      avatarEl.textContent = getInitials(name);
+    }
+  } catch (_) {
+    /* offline — leave UI usable until next request fails */
+  }
+}
+
+/**
+ * PATCH a subset of user preferences. Returns false on error.
+ * FUTURE: call from a settings panel; wire to AI context.
+ */
+async function updatePwPreferences(patch) {
+  try {
+    const r = await fetch('/api/preferences', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(patch || {}),
+    });
+    if (!r.ok) return false;
+    const data = await r.json();
+    pwPreferences = data.preferences || pwPreferences;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/* ── Init ────────────────────────────────────────────── */
+
+loadConversations();
+initSidebar();
+loadAuthSession();

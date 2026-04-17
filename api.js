@@ -7,22 +7,28 @@
 // callbacks: { onChunk(text), onDone({ text, sql, raw }), onError(message) }
 
 async function sendToAI(messages, callbacks) {
+  const { onChunk, onDone, onError, advisorMode } = callbacks;
   let response;
+  // Read user memory from localStorage and attach to request.
+  // Server injects it into the system prompt (placeholder until server-side persistence).
+  const userMemory = localStorage.getItem('pw_user_memory') || '';
+
   try {
     response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages }),
+      credentials: 'same-origin',
+      body: JSON.stringify({ messages, advisorMode: !!advisorMode, ...(userMemory ? { userMemory } : {}) }),
     });
   } catch {
-    callbacks.onError('Network error — is the server running? Try: npm start');
+    onError('Network error — is the server running? Try: npm start');
     return;
   }
 
   if (!response.ok) {
     let msg = `Server error ${response.status}`;
     try { const err = await response.json(); msg = err.error || msg; } catch {}
-    callbacks.onError(msg);
+    onError(msg);
     return;
   }
 
@@ -52,17 +58,17 @@ async function sendToAI(messages, callbacks) {
         if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
           const chunk = event.delta.text;
           rawText += chunk;
-          callbacks.onChunk?.(chunk);
+          onChunk?.(chunk);
         }
       }
     }
   } catch {
-    callbacks.onError('Stream interrupted — please try again.');
+    onError('Stream interrupted — please try again.');
     return;
   }
 
-  const { text, sql } = extractSQL(rawText);
-  callbacks.onDone?.({ text, sql, raw: rawText });
+  const { text, sql, reasoning } = extractSQL(rawText);
+  onDone?.({ text, sql, reasoning, raw: rawText });
 }
 
 /* ── generateTitleWithAI ────────────────────────────── */
@@ -73,6 +79,7 @@ async function generateTitleWithAI(message) {
     const res = await fetch('/api/title', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
       body: JSON.stringify({ message }),
     });
     if (!res.ok) return null;
@@ -84,14 +91,41 @@ async function generateTitleWithAI(message) {
 }
 
 /* ── extractSQL ─────────────────────────────────────── */
-// Splits the raw model response into prose text and an optional SQL block.
-// Returns { text: string, sql: string|null }
+// Splits the raw model response into prose text, an optional SQL block,
+// and an optional <reasoning> block.
+// Returns { text: string, sql: string|null, reasoning: string|null }
 
 function extractSQL(raw) {
-  const fence = /```sql\s*([\s\S]*?)```/i;
-  const match = raw.match(fence);
-  if (!match) return { text: raw.trim(), sql: null };
-  const sql  = match[1].trim();
-  const text = raw.replace(fence, '').trim();
-  return { text, sql };
+  const fence     = /```sql\s*([\s\S]*?)```/i;
+  const reasonPat = /<reasoning>([\s\S]*?)<\/reasoning>/i;
+
+  const sqlMatch      = raw.match(fence);
+  const reasoningMatch = raw.match(reasonPat);
+
+  const sql       = sqlMatch       ? sqlMatch[1].trim()       : null;
+  const reasoning = reasoningMatch ? reasoningMatch[1].trim() : null;
+
+  let text = raw;
+  if (sqlMatch)       text = text.replace(fence, '');
+  if (reasoningMatch) text = text.replace(reasonPat, '');
+  text = text.trim();
+
+  return { text, sql, reasoning };
+}
+
+/** Strips optional <pw-options>…</pw-options> JSON array (build-mode clarification chips). */
+function extractPwOptions(raw) {
+  if (typeof raw !== 'string') return { text: raw, options: null };
+  const pat = /<pw-options>\s*([\s\S]*?)\s*<\/pw-options>/i;
+  const m = raw.match(pat);
+  if (!m) return { text: raw, options: null };
+  let options = null;
+  try {
+    const parsed = JSON.parse(m[1].trim());
+    if (Array.isArray(parsed) && parsed.length >= 3) options = parsed;
+  } catch (_) {
+    options = null;
+  }
+  const text = raw.replace(pat, '').trim();
+  return { text, options };
 }

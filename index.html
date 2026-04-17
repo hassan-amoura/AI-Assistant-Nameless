@@ -3,51 +3,84 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="PW Report Builder — AI-powered T-SQL report generation for Projectworks and Metabase." />
   <title>PW Report Builder</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%231C272D'/%3E%3Crect x='6' y='8' width='5' height='16' fill='%23CBDF00'/%3E%3Crect x='14' y='8' width='5' height='11' fill='%23CBDF00'/%3E%3Cpolygon points='22,8 27,8 27,24 22,24 22,14' fill='%23CBDF00'/%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 <div class="app">
 
   <!-- ── Sidebar ── -->
-  <aside class="sidebar">
-    <!-- White logo banner -->
+  <aside class="sidebar" id="sidebar">
+    <!-- Compact header: PW mark icon + collapse toggle -->
     <div class="sidebar-header">
-      <svg class="sidebar-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2792 376.92" fill="currentColor">
-          <defs><style>.cls-1{fill-rule:evenodd;}</style></defs>
-          <path d="M712.06,181.9c19.73,0,31.71-10.92,31.71-28.32s-11.99-28.8-31.71-28.8h-32.49v57.12h32.49Zm-32.49,27.54v71.9h-31.13V97.24h68.36c35.39,0,58.69,23.87,58.69,56.05s-23.4,56.05-58.69,56.05h-37.23v.1Z"/>
-          <path d="M874.4,181.13c19.24,0,31.71-11.21,31.71-28.03s-12.47-28.32-31.71-28.32h-33.55v56.34h33.55Zm-10.64,27.54h-22.92v72.68h-31.42V97.24h70.68c35.58,0,57.73,24.64,57.73,55.86,0,26.19-15.86,46.2-41.58,52.48l41.58,75.87h-35.39l-38.68-72.68v-.1Z"/>
-          <path d="M1057.35,255.64c31.13,0,61.88-22.04,61.88-66.49s-30.65-66.49-61.88-66.49-61.59,22.04-61.59,66.49,30.65,66.49,61.59,66.49Zm0-162.27c48.35,0,93.79,35.57,93.79,95.87s-45.45,96.07-93.79,96.07-93.5-35.57-93.5-96.07,45.16-95.87,93.5-95.87Z"/>
-          <path d="M1167.19,213.89l30.36-6.28v17.11c0,21.55,12.18,31.12,28.33,31.12s26.98-11.21,26.98-29.86V97.24h31.13V225.3c0,32.76-22.82,60.02-57.92,60.02s-58.98-23.58-58.98-59.44v-11.98h.1Z"/>
-          <polygon points="1326.15 281.35 1326.15 97.24 1439.96 97.24 1439.96 126.33 1357.38 126.33 1357.38 175.14 1432.22 175.14 1432.22 203.45 1357.38 203.45 1357.38 252.26 1439.96 252.26 1439.96 281.35 1326.15 281.35"/>
-          <path d="M1470.61,189.44c0-60.02,44.96-96.07,92.73-96.07s74.55,27.54,82.86,59.73l-29.39,9.86c-5.41-22.32-22.63-40.3-53.57-40.3s-60.82,22.04-60.82,66.78,29.59,66.01,61.01,66.01,48.64-19.72,54.82-40.49l28.62,9.37c-8.32,31.12-36.36,60.98-83.45,60.98-49.6,0-93.02-35.86-93.02-95.87h.19Z"/>
-          <polygon points="1754.2 126.62 1754.2 281.35 1723.07 281.35 1723.07 126.62 1663.31 126.62 1663.31 97.24 1814.25 97.24 1814.25 126.62 1754.2 126.62"/>
-          <polygon points="2056.66 97.24 2088.86 97.24 2037.13 281.35 2004.93 281.35 1960.26 142.18 1915.58 281.35 1883.58 281.35 1831.36 97.24 1864.14 97.24 1901.08 231.77 1944.11 97.24 1976.6 97.24 2020.49 232.83 2056.66 97.24"/>
-          <path d="M2195.31,255.64c31.13,0,61.88-22.04,61.88-66.49s-30.65-66.49-61.88-66.49-61.59,22.04-61.59,66.49,30.65,66.49,61.59,66.49Zm0-162.27c48.35,0,93.79,35.57,93.79,95.87s-45.45,96.07-93.79,96.07-93.5-35.57-93.5-96.07,45.16-95.87,93.5-95.87Z"/>
-          <path d="M2386.96,181.13c19.24,0,31.71-11.21,31.71-28.03s-12.47-28.32-31.71-28.32h-33.55v56.34h33.55Zm-10.64,27.54h-22.92v72.68h-31.42V97.24h70.68c35.58,0,57.73,24.64,57.73,55.86,0,26.19-15.86,46.2-41.58,52.48l41.58,75.87h-35.39l-38.68-72.68v-.1Z"/>
-          <polygon points="2544.37 201.71 2519.91 228.49 2519.91 281.45 2488.77 281.45 2488.77 97.24 2519.91 97.24 2519.91 185.57 2599.2 97.24 2640.29 97.24 2565.74 178.52 2641.06 281.35 2601.81 281.35 2544.37 201.62 2544.37 201.71"/>
-          <path d="M2761.83,149.24c-1.84-11.4-11.41-28.32-36.07-28.32-18.66,0-31.72,12.47-31.72,26.48,0,11.69,7.25,20.49,21.56,23.68l26.49,5.41c32.49,6.48,49.89,26.96,49.89,52.96,0,28.61-23.11,55.86-65.17,55.86-46.8,0-68.36-30.15-71.17-56.63l29.1-8.31c1.84,19.23,15.57,36.92,42.06,36.92,22.05,0,33.55-11.21,33.55-25.42,0-11.98-8.8-21.55-24.66-24.93l-26.01-5.41c-28.04-5.7-46.8-24.16-46.8-51.71,0-30.93,28.33-56.34,62.66-56.34,43.41,0,60.24,26.48,64.4,46.97l-28.04,8.79h-.1Z"/>
-          <rect x="0" y="91.61" width="77.81" height="285.31"/>
-          <rect x="228.25" y="91.61" width="72.62" height="191.94"/>
-          <polygon class="cls-1" points="451.31 53.04 529.12 0 529.12 283.54 451.31 283.54 451.31 53.04"/>
-          <polygon class="cls-1" points="337.19 130.83 415 77.79 415 283.54 337.19 283.54 337.19 130.83"/>
-          <polygon class="cls-1" points="114.12 91.61 191.94 91.61 191.94 229.83 114.12 282.87 114.12 91.61"/>
+      <span class="sidebar-label">AI Reports</span>
+      <button class="btn-collapse-toggle" id="btn-collapse-toggle" onclick="toggleSidebar()" title="Collapse sidebar">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M9.78 12.78a.75.75 0 01-1.06 0L4.47 8.53a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 1.06L6.06 8l3.72 3.72a.75.75 0 010 1.06z"/>
         </svg>
+      </button>
     </div>
     <!-- Dark nav body -->
     <div class="sidebar-body">
+      <!-- Search bar -->
+      <div class="sidebar-search" id="sidebar-search">
+        <div class="search-input-wrap">
+          <svg class="search-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M10.68 11.74a6 6 0 01-7.922-8.982 6 6 0 018.982 7.922l3.04 3.04a.749.749 0 01-.326 1.275.749.749 0 01-.734-.215l-3.04-3.04zm-5.44-1.19a4.5 4.5 0 106.364-6.364 4.5 4.5 0 00-6.364 6.364z"/>
+          </svg>
+          <input type="text" id="search-input" placeholder="Search reports..." oninput="searchConversations(this.value)" autocomplete="off">
+          <button class="btn-search-clear" id="btn-search-clear" onclick="clearSearch()" hidden title="Clear">
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
       <div class="sidebar-nav">
-        <button class="btn-new-report" onclick="newReport()">
+        <button class="btn-new-report" onclick="newReport()" title="New report">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
             <path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z"/>
           </svg>
-          New report
+          <span class="btn-label">New report</span>
         </button>
       </div>
       <div class="conv-list" id="conv-list"></div>
+      <div class="sidebar-footer">
+        <!-- User row + settings trigger -->
+        <button type="button" class="sidebar-user-trigger" id="sidebar-user-trigger" onclick="openSettings()" title="Settings">
+          <div class="sidebar-user-avatar" id="sidebar-user-avatar">?</div>
+          <span class="sidebar-user-email" id="sidebar-user-email" title=""></span>
+          <svg class="sidebar-settings-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path fill-rule="evenodd" d="M7.429 1.525a6.593 6.593 0 011.142 0c.036.003.108.036.137.146l.289 1.105c.147.56.55.967.997 1.189.174.086.341.183.501.29.417.278.97.423 1.53.28l1.094-.31c.11-.03.175.016.195.046.219.31.41.641.573.989.06.127.025.207-.062.27l-.958.683c-.482.345-.766.827-.775 1.336-.003.172-.011.343-.011.514s.008.342.011.514c.009.509.293.991.775 1.336l.958.683c.087.063.122.143.062.27a6.594 6.594 0 01-.573.99c-.02.029-.086.075-.195.045l-1.094-.31c-.56-.144-1.113 0-1.53.28-.16.107-.327.204-.502.29-.446.222-.85.629-.997 1.189l-.289 1.105c-.029.11-.1.143-.137.146a6.585 6.585 0 01-1.142 0c-.036-.003-.108-.036-.137-.146l-.289-1.105c-.147-.56-.55-.967-.997-1.189a4.502 4.502 0 01-.501-.29c-.417-.278-.97-.423-1.53-.28l-1.094.31c-.11.03-.175-.016-.195-.046a6.591 6.591 0 01-.573-.989c-.06-.127-.025-.207.062-.27l.958-.683c.482-.345.766-.827.775-1.336.003-.172.011-.343.011-.514s-.008-.342-.011-.514c-.009-.509-.293-.991-.775-1.336l-.958-.683c-.087-.063-.122-.143-.062-.27a6.59 6.59 0 01.573-.99c.02-.029.086-.075.195-.045l1.094.31c.56.144 1.113 0 1.53-.28.16-.107.327-.204.502-.29.446-.222.85-.629.997-1.189l.289-1.105c.029-.11.1-.143.137-.146zM8 10a2 2 0 100-4 2 2 0 000 4z"/>
+          </svg>
+        </button>
+        <!-- Mode toggle: Report vs Advisor — advisorMode is sent with /api/chat -->
+        <div class="mode-toggle">
+          <button class="mode-btn mode-report active" id="btn-mode-report" onclick="setAdvisorMode(false)" title="Report mode">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M1.75 14.5a.75.75 0 010-1.5H2.5V4a.75.75 0 01.75-.75h2.5A.75.75 0 016.5 4v9h1V7a.75.75 0 01.75-.75h2.5A.75.75 0 0111.5 7v6h.75a.75.75 0 010 1.5h-10.5z"/>
+            </svg>
+            <span class="mode-label">Report</span>
+          </button>
+          <button class="mode-btn mode-advisor" id="btn-mode-advisor" onclick="setAdvisorMode(true)" title="Advisor mode">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M2.75 2.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h1.5a.75.75 0 01.75.75v1.19l1.72-1.72a.75.75 0 01.53-.22h5.25a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25H2.75zM1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H8.56l-2.34 2.34a.75.75 0 01-1.28-.53V12h-.19A1.75 1.75 0 013 10.25v-7.5z"/>
+            </svg>
+            <span class="mode-label">Advisor</span>
+          </button>
+        </div>
+        <button type="button" class="btn-view-all-reports" id="btn-sidebar-main-nav" onclick="handleSidebarMainNav()" title="All reports">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M1.5 1.75A.75.75 0 012.25 1h11.5a.75.75 0 01.75.75v1.5a.75.75 0 01-.75.75H2.25a.75.75 0 01-.75-.75V1.75zM2.25 5.5a.75.75 0 000 1.5h11.5a.75.75 0 000-1.5H2.25zM2 9.25a.75.75 0 01.75-.75h11.5a.75.75 0 010 1.5H2.75A.75.75 0 012 9.25zM2.75 12a.75.75 0 000 1.5h7.5a.75.75 0 000-1.5h-7.5z"/>
+          </svg>
+          <span class="btn-label" id="sidebar-main-nav-label">View All Reports</span>
+        </button>
+      </div>
     </div>
   </aside>
 
@@ -55,12 +88,28 @@
   <div class="main-area">
 
     <!-- ── Chat column ── -->
-    <div class="chat-col">
+    <div class="chat-col" id="chat-col">
+      <button type="button" class="view-report-tab" id="view-report-tab" onclick="reopenResultsPanel()" hidden aria-label="View report">View Report</button>
+      <!-- Mobile-only top bar -->
+      <div class="mobile-bar">
+        <button class="btn-sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" aria-label="Toggle sidebar">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M1 2.75A.75.75 0 011.75 2h12.5a.75.75 0 010 1.5H1.75A.75.75 0 011 2.75zm0 5A.75.75 0 011.75 7h12.5a.75.75 0 010 1.5H1.75A.75.75 0 011 7.75zM1.75 12a.75.75 0 000 1.5h12.5a.75.75 0 000-1.5H1.75z"/>
+          </svg>
+          Menu
+        </button>
+      </div>
       <main class="chat-area" id="chat-area">
         <div class="chat-inner" id="chat-inner">
           <div class="welcome" id="welcome">
             <h1>What report do you need?</h1>
-            <p>Describe what you need and I'll write the SQL.</p>
+            <p>Describe what you need and I'll write the SQL for Metabase.</p>
+            <div class="welcome-chips">
+              <button class="chip" onclick="submitChip(this.dataset.q)" data-q="Show me revenue by client for the last 3 months">Show me revenue by client for the last 3 months</button>
+              <button class="chip" onclick="submitChip(this.dataset.q)" data-q="Which projects are over budget this quarter?">Which projects are over budget this quarter?</button>
+              <button class="chip" onclick="submitChip(this.dataset.q)" data-q="What is our gross profit by sector this year?">What is our gross profit by sector this year?</button>
+              <button class="chip" onclick="submitChip(this.dataset.q)" data-q="Show me utilisation by person for last month">Show me utilisation by person for last month</button>
+            </div>
           </div>
         </div>
       </main>
@@ -88,6 +137,100 @@
       </div>
     </div>
 
+    <!-- ── Library mode ── -->
+    <div class="library-mode" id="library-mode">
+      <div class="library-header">
+        <div class="library-title-row">
+          <h2 class="library-title">My Reports</h2>
+          <button type="button" class="btn-back-to-chat" onclick="switchToChat()">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M7.78 12.53a.75.75 0 01-1.06 0L2.47 8.28a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 1.06L4.81 7h7.44a.75.75 0 010 1.5H4.81l2.97 2.97a.75.75 0 010 1.06z"/>
+            </svg>
+            Return to Chat
+          </button>
+        </div>
+        <div class="filter-chips-row" id="filter-chips-row">
+          <button class="filter-chip active" data-filter="All" onclick="filterLibrary('All')">All</button>
+          <button class="filter-chip" data-filter="Revenue" onclick="filterLibrary('Revenue')">Revenue</button>
+          <button class="filter-chip" data-filter="Margin" onclick="filterLibrary('Margin')">Margin</button>
+          <button class="filter-chip" data-filter="Projects" onclick="filterLibrary('Projects')">Projects</button>
+          <button class="filter-chip" data-filter="People" onclick="filterLibrary('People')">People</button>
+          <button class="filter-chip" data-filter="Utilisation" onclick="filterLibrary('Utilisation')">Utilisation</button>
+          <button class="filter-chip" data-filter="Expenses" onclick="filterLibrary('Expenses')">Expenses</button>
+          <button class="filter-chip" data-filter="Time" onclick="filterLibrary('Time')">Time</button>
+        </div>
+      </div>
+      <div class="library-list" id="library-list"></div>
+    </div>
+
+    <!-- ── Saved report detail (full main workspace, not chat) ── -->
+    <div class="report-detail-mode" id="report-detail-mode" style="display:none">
+      <header class="report-detail-header report-detail-header--workspace">
+        <div class="report-detail-header-text">
+          <p class="report-detail-kicker">Saved report</p>
+          <p class="report-detail-category" id="rd-category-line"></p>
+          <h1 class="report-detail-title" id="rd-title">Report</h1>
+        </div>
+        <button type="button" class="btn-back-to-reports" id="btn-back-to-reports" onclick="switchFromReportDetailToLibrary()">
+          Back to Reports
+        </button>
+      </header>
+      <div class="report-detail-inner">
+        <div class="rd-workspace-bar" role="tablist" aria-label="Report workspace">
+          <button type="button" class="rd-ws-btn active" id="rd-ws-results" role="tab" aria-selected="true" onclick="switchReportDetailWorkspace('results')">Results</button>
+          <button type="button" class="rd-ws-btn" id="rd-ws-sql" role="tab" aria-selected="false" onclick="switchReportDetailWorkspace('sql')">SQL Editor</button>
+          <button type="button" class="rd-ws-btn rd-ws-btn-chat" id="rd-ws-chat" onclick="returnToChatFromReportDetail()">Chat</button>
+        </div>
+        <div class="rd-panel-scroll">
+          <div class="panel-results-view" id="rd-panel-results">
+            <div class="results-table-wrap">
+              <table class="results-table">
+                <thead><tr id="rd-thead-row"></tr></thead>
+                <tbody id="rd-tbody"></tbody>
+              </table>
+            </div>
+            <p class="results-notice">Live data requires a database connection — connect with your Projectworks database to see real results.</p>
+            <div class="results-panel-actions rd-actions-strip">
+              <p class="save-report-confirm" id="rd-save-report-confirm">Saved to My Reports <span class="save-check" aria-hidden="true">✓</span></p>
+              <div class="rd-actions-primary">
+                <button type="button" class="btn-save-report" id="rd-btn-save-report" disabled>Saved ✓</button>
+                <button type="button" class="btn-send-metabase" onclick="openMetabaseModal()">
+                  Send to Metabase
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8.22 2.97a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06l2.97-2.97H3.75a.75.75 0 010-1.5h7.44L8.22 4.03a.75.75 0 010-1.06z"/></svg>
+                </button>
+              </div>
+              <button type="button" class="btn-rd-export" onclick="exportCSV()" title="Export as CSV">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                  <path d="M7.47 10.78a.75.75 0 001.06 0l3.75-3.75a.75.75 0 00-1.06-1.06L8.75 8.44V1.75a.75.75 0 00-1.5 0v6.69L4.78 5.97a.75.75 0 00-1.06 1.06l3.75 3.75zM3.75 13a.75.75 0 000 1.5h8.5a.75.75 0 000-1.5h-8.5z"/>
+                </svg>
+                <span class="btn-rd-export-label">Export CSV</span>
+              </button>
+            </div>
+          </div>
+          <div class="panel-sql-view" id="rd-panel-sql" style="display:none">
+            <div class="sql-panel-actions-row">
+              <button type="button" class="btn-copy-sql" id="rd-btn-copy-sql" onclick="copyReportDetailSql()">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/>
+                  <path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/>
+                </svg>
+                Copy SQL
+              </button>
+              <button type="button" class="btn-download-report" onclick="downloadReportFromDetail()">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M7.47 10.78a.75.75 0 001.06 0l3.75-3.75a.75.75 0 00-1.06-1.06L8.75 8.44V1.75a.75.75 0 00-1.5 0v6.69L4.78 5.97a.75.75 0 00-1.06 1.06l3.75 3.75zM3.75 13a.75.75 0 000 1.5h8.5a.75.75 0 000-1.5h-8.5z"/>
+                </svg>
+                Download
+              </button>
+            </div>
+            <div class="sql-code-block">
+              <pre id="rd-sql-output"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ── SQL Panel ── -->
     <aside class="sql-panel" id="sql-panel">
       <div class="sql-panel-inner">
@@ -100,6 +243,11 @@
           </div>
           <div class="sql-panel-actions">
             <span class="sql-badge">T-SQL</span>
+            <button class="btn-fullscreen" onclick="openFullScreenReport()" title="Full screen">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M1.75 10a.75.75 0 01.75.75v2.5h2.5a.75.75 0 010 1.5h-3.5a.75.75 0 01-.75-.75v-3.5a.75.75 0 01.75-.75zm12.5 0a.75.75 0 01.75.75v3.5a.75.75 0 01-.75.75h-3.5a.75.75 0 010-1.5h2.5v-2.5a.75.75 0 01.75-.75zM1.75 6a.75.75 0 01.75-.75h3.5a.75.75 0 010 1.5H4.5v2.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 011.75 6zm12.5 0a.75.75 0 01-.75.75h-2.5V9.25a.75.75 0 01-1.5 0v-3.5a.75.75 0 01.75-.75h3.5a.75.75 0 01.75.75z"/>
+              </svg>
+            </button>
             <button class="btn-panel-close" onclick="closeSQLPanel()" title="Close panel">
               <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/>
@@ -108,8 +256,34 @@
           </div>
         </div>
 
-        <!-- Scrollable body -->
-        <div class="sql-panel-body">
+        <!-- Tab bar -->
+        <div class="panel-tab-bar">
+          <button class="panel-tab active" id="tab-results" onclick="switchPanelTab('results')">Results</button>
+          <button class="panel-tab" id="tab-sql" onclick="switchPanelTab('sql')">SQL</button>
+        </div>
+
+        <!-- Results view (default) -->
+        <div class="panel-results-view" id="panel-results-view">
+          <div class="results-table-wrap">
+            <table class="results-table">
+              <thead><tr id="results-thead-row"></tr></thead>
+              <tbody id="results-tbody"></tbody>
+            </table>
+          </div>
+          <p class="results-notice">Live data requires a database connection — connect with your Projectworks database to see real results.</p>
+          <div class="results-panel-actions">
+            <p class="save-report-confirm" id="save-report-confirm" hidden>Saved to My Reports <span class="save-check" aria-hidden="true">✓</span></p>
+            <button type="button" class="btn-save-report" id="btn-save-report" onclick="saveReportToLibraryManual()">Save Report</button>
+            <!-- TODO: Replace with actual Metabase deep-link once DB + Metabase API are integrated -->
+            <button type="button" class="btn-send-metabase" onclick="openMetabaseModal()">
+              Send to Metabase
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8.22 2.97a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06l2.97-2.97H3.75a.75.75 0 010-1.5h7.44L8.22 4.03a.75.75 0 010-1.06z"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- SQL view -->
+        <div class="panel-sql-view" id="panel-sql-view" style="display:none">
 
           <!-- Action buttons -->
           <div class="sql-panel-actions-row">
@@ -120,11 +294,12 @@
               </svg>
               Copy SQL
             </button>
-            <button class="btn-metabase-guide" onclick="toggleMetabaseGuide()">
+
+            <button class="btn-download-report" onclick="downloadReport()">
               <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M0 8a8 8 0 1116 0A8 8 0 010 8zm8-6.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zM6.92 6.085h.001a.75.75 0 11-1.342-.67c.169-.339.436-.701.849-.977C6.851 4.16 7.368 4 8 4a2.756 2.756 0 012.114.979 2.363 2.363 0 01.64 2.013c-.257 1.232-1.239 1.814-1.99 2.15a.75.75 0 01-.548-1.392c.64-.252 1.099-.594 1.215-1.158a.87.87 0 00-.235-.743A1.254 1.254 0 008 5.5c-.34 0-.569.085-.737.195a1.351 1.351 0 00-.343.39zM9 11a1 1 0 11-2 0 1 1 0 012 0z"/>
+                <path d="M7.47 10.78a.75.75 0 001.06 0l3.75-3.75a.75.75 0 00-1.06-1.06L8.75 8.44V1.75a.75.75 0 00-1.5 0v6.69L4.78 5.97a.75.75 0 00-1.06 1.06l3.75 3.75zM3.75 13a.75.75 0 000 1.5h8.5a.75.75 0 000-1.5h-8.5z"/>
               </svg>
-              How to add to Metabase
+              Download
             </button>
           </div>
 
@@ -133,52 +308,184 @@
             <pre id="sql-output"></pre>
           </div>
 
-          <!-- Metabase guide (collapsed by default) -->
-          <div class="metabase-guide" id="metabase-guide" style="display:none">
-            <div class="guide-step">
-              <div class="guide-step-num">1</div>
-              <div class="guide-step-body">
-                <strong>Open Metabase</strong>
-                Navigate to your Metabase instance and click <strong>+ New</strong> in the top nav.
-              </div>
-            </div>
-            <div class="guide-step">
-              <div class="guide-step-num">2</div>
-              <div class="guide-step-body">
-                <strong>Choose Native Query</strong>
-                Select <strong>Question</strong>, then switch to <strong>Native query</strong> (SQL editor).
-              </div>
-            </div>
-            <div class="guide-step">
-              <div class="guide-step-num">3</div>
-              <div class="guide-step-body">
-                <strong>Select the database</strong>
-                Choose the <strong>Projectworks reporting</strong> database from the dropdown.
-              </div>
-            </div>
-            <div class="guide-step">
-              <div class="guide-step-num">4</div>
-              <div class="guide-step-body">
-                <strong>Paste the SQL</strong>
-                Copy the query above and paste it into the editor. Click <strong>Run</strong> to preview results.
-              </div>
-            </div>
-            <div class="guide-step">
-              <div class="guide-step-num">5</div>
-              <div class="guide-step-body">
-                <strong>Save and share</strong>
-                Click <strong>Save</strong>, give it a name, and add it to a dashboard if needed.
-              </div>
-            </div>
+
+          <!-- Keyboard shortcuts hint -->
+          <div class="panel-kbd-hint">
+            <kbd>⌘ Shift C</kbd> Copy &nbsp;·&nbsp; <kbd>Esc</kbd> Close
           </div>
 
-        </div><!-- /sql-panel-body -->
+        </div><!-- /panel-sql-view -->
       </div><!-- /sql-panel-inner -->
     </aside>
 
   </div><!-- /main-area -->
 
 </div>
+<!-- Metabase modal — demo placeholder -->
+<div class="modal-overlay" id="metabase-modal" style="display:none" onclick="closeMetabaseModal()">
+  <div class="modal-card" onclick="event.stopPropagation()">
+    <div class="modal-logo">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2792 376.92" fill="currentColor" aria-label="Projectworks">
+        <defs><style>.cls-1{fill-rule:evenodd;}</style></defs>
+        <path d="M712.06,181.9c19.73,0,31.71-10.92,31.71-28.32s-11.99-28.8-31.71-28.8h-32.49v57.12h32.49Zm-32.49,27.54v71.9h-31.13V97.24h68.36c35.39,0,58.69,23.87,58.69,56.05s-23.4,56.05-58.69,56.05h-37.23v.1Z"/>
+        <path d="M1057.35,255.64c31.13,0,61.88-22.04,61.88-66.49s-30.65-66.49-61.88-66.49-61.59,22.04-61.59,66.49,30.65,66.49,61.59,66.49Zm0-162.27c48.35,0,93.79,35.57,93.79,95.87s-45.45,96.07-93.79,96.07-93.5-35.57-93.5-96.07,45.16-95.87,93.5-95.87Z"/>
+        <rect x="0" y="91.61" width="77.81" height="285.31"/>
+        <rect x="228.25" y="91.61" width="72.62" height="191.94"/>
+        <polygon class="cls-1" points="451.31 53.04 529.12 0 529.12 283.54 451.31 283.54 451.31 53.04"/>
+        <polygon class="cls-1" points="337.19 130.83 415 77.79 415 283.54 337.19 283.54 337.19 130.83"/>
+        <polygon class="cls-1" points="114.12 91.61 191.94 91.61 191.94 229.83 114.12 282.87 114.12 91.61"/>
+      </svg>
+    </div>
+    <h2 class="modal-title">Send to Metabase</h2>
+    <p class="modal-description">Copy this SQL and paste it into Metabase's native query editor to build a question or dashboard card.</p>
+    <div class="modal-actions">
+      <!-- TODO: Replace with real Metabase deep-link once DB + Metabase API are integrated -->
+      <button class="btn-modal-primary" onclick="closeMetabaseModal()">Open Metabase</button>
+      <button class="btn-modal-cancel" onclick="closeMetabaseModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Full screen report modal -->
+<div class="fs-report-overlay" id="fullscreen-report-modal" style="display:none" onclick="closeFullScreenReport()">
+  <div class="fs-report-modal" onclick="event.stopPropagation()">
+    <div class="fs-report-header">
+      <h2 class="fs-report-title" id="fs-report-title">Report</h2>
+      <button class="btn-fs-close" onclick="closeFullScreenReport()" title="Close">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/>
+        </svg>
+      </button>
+    </div>
+    <div class="fs-table-wrap">
+      <table class="results-table">
+        <thead><tr id="fs-thead-row"></tr></thead>
+        <tbody id="fs-tbody"></tbody>
+      </table>
+    </div>
+    <p class="fs-results-notice">Live data requires a database connection — connect with your Projectworks database to see real results.</p>
+    <div class="fs-actions">
+      <button class="btn-save-report fs-action-btn" onclick="saveReportToLibraryManual()">Save Report</button>
+      <button class="btn-send-metabase fs-action-btn" onclick="openMetabaseModal()">
+        Send to Metabase
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8.22 2.97a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06l2.97-2.97H3.75a.75.75 0 010-1.5h7.44L8.22 4.03a.75.75 0 010-1.06z"/></svg>
+      </button>
+      <!-- TODO: When live-connected, this exports real query results -->
+      <button class="btn-export-csv" onclick="exportCSV()">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M7.47 10.78a.75.75 0 001.06 0l3.75-3.75a.75.75 0 00-1.06-1.06L8.75 8.44V1.75a.75.75 0 00-1.5 0v6.69L4.78 5.97a.75.75 0 00-1.06 1.06l3.75 3.75zM3.75 13a.75.75 0 000 1.5h8.5a.75.75 0 000-1.5h-8.5z"/>
+        </svg>
+        Export CSV
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Settings panel (slide-over, overlays sidebar) ── -->
+<div class="settings-overlay" id="settings-panel" aria-hidden="true">
+  <div class="settings-inner">
+    <!-- Header with back arrow -->
+    <div class="settings-head">
+      <button type="button" class="btn-settings-back" onclick="closeSettings()" title="Back">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M9.78 12.78a.75.75 0 01-1.06 0L4.47 8.53a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 1.06L6.06 8l3.72 3.72a.75.75 0 010 1.06z"/>
+        </svg>
+      </button>
+      <span class="settings-title">Settings</span>
+    </div>
+
+    <!-- Scrollable body -->
+    <div class="settings-body" id="settings-body">
+
+      <!-- Profile -->
+      <div class="settings-section">
+        <div class="settings-section-title">Profile</div>
+        <div class="settings-profile-row">
+          <div class="settings-profile-avatar" id="settings-profile-avatar">?</div>
+          <div class="settings-profile-info">
+            <div class="settings-profile-name" id="settings-profile-name"></div>
+            <div class="settings-profile-email" id="settings-profile-email"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Preferences -->
+      <!-- NOTE: these values will be injected into the AI system prompt in a future update -->
+      <div class="settings-section">
+        <div class="settings-section-title">Preferences</div>
+
+        <div class="settings-pref-row">
+          <label class="settings-pref-label" for="pref-date-range">Default date range</label>
+          <select class="settings-select" id="pref-date-range" onchange="savePreferences()">
+            <option value="3m">Last 3 months</option>
+            <option value="6m">Last 6 months</option>
+            <option value="ytd">This year</option>
+            <option value="12m">Last 12 months</option>
+            <option value="all">All time</option>
+          </select>
+        </div>
+
+        <div class="settings-pref-row">
+          <label class="settings-pref-label" for="pref-revenue-def">Revenue definition</label>
+          <select class="settings-select" id="pref-revenue-def" onchange="savePreferences()">
+            <option value="finance">Finance Approved only</option>
+            <option value="manager">Manager Approved only</option>
+            <option value="both" selected>Both (default)</option>
+          </select>
+        </div>
+
+        <div class="settings-pref-row settings-pref-row--toggle">
+          <label class="settings-pref-label">Reasoning block</label>
+          <div class="settings-toggle-wrap">
+            <span class="settings-toggle-label">Collapsed</span>
+            <button type="button" class="settings-toggle" id="pref-reasoning-toggle"
+                    onclick="toggleReasoningPref()" role="switch" aria-checked="false">
+              <span class="settings-toggle-knob"></span>
+            </button>
+            <span class="settings-toggle-label">Expanded</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Memory -->
+      <div class="settings-section">
+        <div class="settings-section-title">Memory</div>
+        <p class="settings-section-sub">Notes here are included in every conversation. Use this to tell the AI about your org structure, preferences, or anything it should always know.</p>
+        <textarea class="settings-memory-textarea" id="settings-memory" maxlength="2000"
+                  placeholder="e.g. We use Finance Approved invoices for revenue. Exclude internal projects from utilisation reports."
+                  oninput="updateMemoryCounter()"></textarea>
+        <div class="settings-memory-footer">
+          <span class="settings-memory-counter" id="settings-memory-counter">0 / 2000</span>
+          <button type="button" class="btn-settings-save-memory" id="btn-save-memory" onclick="saveMemory()">Save</button>
+        </div>
+      </div>
+
+      <!-- Archived -->
+      <div class="settings-section">
+        <div class="settings-section-title">Archived</div>
+        <div class="settings-archived-list" id="settings-archived-list">
+          <p class="settings-empty">No archived conversations</p>
+        </div>
+      </div>
+
+      <!-- Recently Deleted -->
+      <div class="settings-section">
+        <div class="settings-section-title">Recently Deleted</div>
+        <div class="settings-deleted-list" id="settings-deleted-list">
+          <p class="settings-empty">No recently deleted conversations</p>
+        </div>
+      </div>
+
+      <!-- Logout -->
+      <div class="settings-section settings-section--logout">
+        <a href="/logout" class="btn-settings-logout">Log out</a>
+      </div>
+
+    </div><!-- /settings-body -->
+  </div><!-- /settings-inner -->
+</div><!-- /settings-panel -->
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="api.js"></script>
 <script src="app.js"></script>
 </body>
