@@ -29,6 +29,16 @@ const TAB_SESSION_KEY = 'pw_tab_session_started';
 // Global mode: sent with /api/chat (Report vs Advisor routing)
 let advisorMode = false;
 
+/** UI shell: replace with server-provided tenant config when available. */
+const PW_TENANT_UI = Object.freeze({
+  displayName: 'Projectworks',
+  /** Set to a URL (e.g. `assets/your-logo.svg`) to replace the default hero mark. */
+  brandLogoSrc: null,
+  welcomeHeadline: 'What are we working on today?',
+  welcomeTagline:
+    'Ask in natural language — I can work with your data, draft reports, and walk through how things connect.',
+});
+
 /**
  * Signed-in user + server preferences (v1).
  * FUTURE: inject preferredRevenueMethod / explanationStyle into prompts; optional memory.
@@ -318,6 +328,48 @@ function initSidebar() {
   updateSidebarNavLabels();
 }
 
+function applyTenantShell() {
+  const nameEl = document.getElementById('app-tenant-name');
+  const header = document.getElementById('app-tenant-header');
+  const brandSlot = document.getElementById('welcome-brand-slot');
+  const headline = document.getElementById('welcome-headline');
+  const tagline = document.getElementById('welcome-tagline');
+  if (nameEl) nameEl.textContent = PW_TENANT_UI.displayName;
+  if (header) header.setAttribute('aria-label', `Workspace: ${PW_TENANT_UI.displayName}`);
+  if (brandSlot) {
+    if (PW_TENANT_UI.brandLogoSrc) {
+      brandSlot.classList.add('welcome-brand-slot--custom');
+      brandSlot.textContent = '';
+      const img = document.createElement('img');
+      img.className = 'welcome-brand-logo-img';
+      img.alt = '';
+      img.width = 48;
+      img.height = 48;
+      img.src = PW_TENANT_UI.brandLogoSrc;
+      brandSlot.appendChild(img);
+    } else {
+      brandSlot.classList.remove('welcome-brand-slot--custom');
+      if (!brandSlot.querySelector('.welcome-mark-svg')) {
+        brandSlot.innerHTML =
+          '<svg class="welcome-mark-svg" width="52" height="52" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+          '<rect x="1.25" y="1.25" width="49.5" height="49.5" rx="15" stroke="currentColor" stroke-opacity="0.22" stroke-width="1.25"/>' +
+          '<circle cx="26" cy="26" r="5.5" fill="currentColor" fill-opacity="0.35"/></svg>';
+      }
+    }
+  }
+  if (headline && PW_TENANT_UI.welcomeHeadline) headline.textContent = PW_TENANT_UI.welcomeHeadline;
+  if (tagline && PW_TENANT_UI.welcomeTagline) tagline.textContent = PW_TENANT_UI.welcomeTagline;
+}
+
+/** Toggles centered “new chat” vs bottom-pinned composer from conversation state. */
+function syncChatLayoutState() {
+  const col = document.getElementById('chat-col');
+  if (!col) return;
+  const conv = getActive();
+  const empty = !conv || !conv.messages.length;
+  col.classList.toggle('chat-col--empty', empty);
+}
+
 function setAdvisorMode(isAdvisor) {
   // Sent with /api/chat so the server uses the data-advisor route; client hides <pw-options> chips here.
   advisorMode = isAdvisor;
@@ -416,10 +468,15 @@ function getReportCategoryForMock(conv) {
 function renderMessages() {
   chatInner.querySelectorAll('.message, #typing-row').forEach(el => el.remove());
   const conv = getActive();
-  if (!conv || !conv.messages.length) { welcome.style.display = ''; return; }
+  if (!conv || !conv.messages.length) {
+    welcome.style.display = '';
+    syncChatLayoutState();
+    return;
+  }
   welcome.style.display = 'none';
   conv.messages.forEach(m => chatInner.appendChild(buildMsgEl(m.role, m.content)));
   scrollDown();
+  syncChatLayoutState();
 }
 
 function buildMsgEl(role, content) {
@@ -536,9 +593,11 @@ function appendTyping() {
     <div class="message-body">
       <div class="bubble typing-placeholder-bubble">
         <div class="typing-pw-stack" aria-hidden="true">
-          <img class="pw-typing-mark-img" src="assets/pw-logomark-black.svg" width="28" height="28" alt="" decoding="async"
-            onerror="this.onerror=null;this.hidden=true;if(this.nextElementSibling)this.nextElementSibling.classList.add('typing-pw-fallback--visible')">
-          <span class="typing-pw-fallback"></span>
+          <div class="ai-thinking">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </div>
         </div>
         <div class="typing-stream-sink" aria-live="polite"></div>
       </div>
@@ -562,7 +621,7 @@ function clearTypingRowIdFromMessage(aiBubbleEl) {
 
 /* ── Send button state ──────────────────────────────── */
 
-const SEND_ARROW_SVG = `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8.22 2.97a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06l2.97-2.97H3.75a.75.75 0 010-1.5h7.44L8.22 4.03a.75.75 0 010-1.06z"/></svg>`;
+const SEND_ARROW_SVG = `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3.47 7.78a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 0l4.25 4.25a.75.75 0 01-1.06 1.06L8.75 4.81v7.44a.75.75 0 01-1.5 0V4.81L4.53 7.78a.75.75 0 01-1.06 0z"/></svg>`;
 
 function setSendBtnLoading() {
   sendBtn.disabled = true;
@@ -1017,7 +1076,7 @@ function renderReportList(reports, filter) {
         <p class="library-empty-sub">Start a conversation to build your first report.</p>
         <button class="btn-empty-new" onclick="switchToChat(); newReport();">
           <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z"/></svg>
-          New Report
+          New Chat
         </button>
       </div>`;
     return;
@@ -1353,6 +1412,7 @@ function sendMessage() {
   setSendBtnLoading();
 
   welcome.style.display = 'none';
+  syncChatLayoutState();
   chatInner.appendChild(buildMsgEl('user', text));
   scrollDown();
   appendTyping();
@@ -1384,7 +1444,7 @@ function sendMessage() {
           const stack = bubble.querySelector('.typing-pw-stack');
           const sink = bubble.querySelector('.typing-stream-sink');
           if (stack) stack.classList.add('typing-pw-stack--exit');
-          if (sink) sink.classList.add('typing-stream-sink--visible');
+          if (sink) { sink.classList.add('typing-stream-sink--visible'); sink.classList.add('typing-cursor'); }
           let stackRemoved = false;
           const removeStack = () => {
             if (stackRemoved || !stack || !stack.parentNode) return;
@@ -1399,6 +1459,7 @@ function sendMessage() {
           clearTypingRowIfDetached(typingRow, null);
           const msgEl = buildMsgEl('assistant', '');
           aiBubble = msgEl.querySelector('.bubble');
+          aiBubble.classList.add('typing-cursor');
           chatInner.appendChild(msgEl);
         }
       }
@@ -1434,6 +1495,9 @@ function sendMessage() {
       }
 
       if (aiBubble) {
+        aiBubble.classList.remove('typing-cursor');
+        const streamSink = aiBubble.querySelector('.typing-stream-sink');
+        if (streamSink) streamSink.classList.remove('typing-cursor');
         aiBubble.innerHTML = processAIContent(raw);
       } else {
         chatInner.appendChild(buildMsgEl('assistant', raw));
@@ -1538,12 +1602,12 @@ function resetCopyBtn() {
 
 const MOCK = {
   months:   ['Jan 2026','Feb 2026','Mar 2026','Apr 2026','May 2026','Jun 2026'],
-  clients:  ['Meridian Health Group','Pacific Infrastructure Ltd','BlueStar Financial Services','TechCore Solutions','Atlas Consulting Group','Nexus Property Group'],
-  projects: ['Digital Transformation Programme','Cloud Migration Phase 2','Operating Model Review','Infrastructure Uplift 2026','Data Analytics Platform','Finance Systems Integration'],
-  persons:  ['Sarah Chen','Michael Torres','Priya Nair','James Robertson','Emma Walsh','David Kim'],
-  teams:    ['Delivery','Data & Analytics','Infrastructure','Strategy & Advisory','Engineering','Design & UX'],
+  clients:  ['Apex Financial Group','Meridian Health','BlueStar Financial Services','TechCore Solutions','Nexus Property Group','Pacific Infrastructure Partners'],
+  projects: ['Orion Digital Transformation','Nebula Cloud Migration','Apollo Data Platform','Voyager ERP Consolidation','Eclipse Risk & Compliance Uplift','Genesis CRM Implementation'],
+  persons:  ['Leonardo DiCaprio','Scarlett Johansson','Natalie Portman','Benedict Cumberbatch','Brad Pitt','Tessa Thompson'],
+  teams:    ['Delivery','Data & Analytics','Strategy & Advisory','Sales','Operations','Leadership'],
   statuses: ['Active','Active','Completed','In Progress','Active','On Hold'],
-  pms:      ['James Robertson','Emma Walsh','Priya Nair','James Robertson','Michael Torres','Sarah Chen'],
+  pms:      ['Leonardo DiCaprio','Benedict Cumberbatch','Scarlett Johansson','Natalie Portman','Brad Pitt','Emma Stone'],
 };
 
 function generateMockData(sql, category) {
@@ -1836,6 +1900,13 @@ function generateTitle(text) {
   return out.charAt(0).toUpperCase() + out.slice(1);
 }
 
+/* ── File attach ────────────────────────────────────── */
+
+function handleAttachFile(input) {
+  if (!input.files || !input.files.length) return;
+  input.value = '';
+}
+
 /* ── Input ──────────────────────────────────────────── */
 
 function onInput(el) {
@@ -2078,8 +2149,111 @@ async function updatePwPreferences(patch) {
   }
 }
 
+/* ── loadGreeting ────────────────────────────────────── */
+// Fetches the tenant's pre-written opening message and displays it on the
+// welcome screen. Only runs when no prior conversations exist.
+
+async function loadGreeting() {
+  if (conversations.length > 0) return;
+  try {
+    const r = await fetch('/api/greeting', { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const { greeting } = await r.json();
+    if (!greeting) return;
+    const greetingEl = document.getElementById('welcome-greeting');
+    if (!greetingEl) return;
+    greetingEl.appendChild(buildMsgEl('assistant', greeting));
+  } catch (_) {}
+}
+
 /* ── Init ────────────────────────────────────────────── */
 
+applyTenantShell();
 loadConversations();
 initSidebar();
 loadAuthSession();
+loadGreeting();
+
+/* ── Profile popover ─────────────────────────────────── */
+
+let _profilePopoverOpen = false;
+
+function openProfilePopover(triggerEl) {
+  const popover = document.getElementById('profile-popover');
+  if (!popover) return;
+
+  if (_profilePopoverOpen) {
+    closeProfilePopover();
+    return;
+  }
+
+  const emailEl = document.getElementById('profile-popover-email');
+  if (emailEl) emailEl.textContent = pwCurrentUser?.email || '';
+
+  popover.removeAttribute('hidden');
+
+  const rect = triggerEl.getBoundingClientRect();
+  const pw = popover.offsetWidth;
+  const ph = popover.offsetHeight;
+
+  let top = rect.top - ph - 8;
+  if (top < 8) top = rect.bottom + 8;
+  let left = rect.left;
+  if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+
+  popover.style.top  = top  + 'px';
+  popover.style.left = left + 'px';
+
+  _profilePopoverOpen = true;
+  setTimeout(() => {
+    document.addEventListener('click', _closePopoverOnOutside, { once: true });
+  }, 0);
+}
+
+function _closePopoverOnOutside(e) {
+  const popover = document.getElementById('profile-popover');
+  if (popover && !popover.contains(e.target)) closeProfilePopover();
+}
+
+function closeProfilePopover() {
+  const popover = document.getElementById('profile-popover');
+  if (popover) popover.setAttribute('hidden', '');
+  _profilePopoverOpen = false;
+}
+
+/* ── Settings page (main-area overlay) ──────────────── */
+
+function openSettingsPage() {
+  closeProfilePopover();
+  const page = document.getElementById('settings-page');
+  if (!page) return;
+  page.style.display = 'flex';
+  _updateSettingsPageProfile();
+  switchSettingsTab('general');
+}
+
+function closeSettingsPage() {
+  const page = document.getElementById('settings-page');
+  if (page) page.style.display = 'none';
+}
+
+function _updateSettingsPageProfile() {
+  if (!pwCurrentUser) return;
+  const name  = pwCurrentUser.name || pwCurrentUser.email.split('@')[0] || '';
+  const email = pwCurrentUser.email || '';
+  const avEl  = document.getElementById('settings-page-avatar');
+  const nmEl  = document.getElementById('settings-page-name');
+  const emEl  = document.getElementById('settings-page-email-display');
+  if (avEl) avEl.textContent = getInitials(name || email);
+  if (nmEl) nmEl.textContent = name || '—';
+  if (emEl) emEl.textContent = email || '—';
+}
+
+function switchSettingsTab(tab) {
+  ['general', 'faq'].forEach(t => {
+    const pane = document.getElementById('settings-tab-' + t);
+    const nav  = document.getElementById('settings-nav-' + t);
+    if (pane) pane.style.display = t === tab ? 'block' : 'none';
+    if (nav)  nav.classList.toggle('active', t === tab);
+  });
+}

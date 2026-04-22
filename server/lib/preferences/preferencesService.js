@@ -32,7 +32,9 @@ function createPreferencesService(store) {
   return {
     PREF_DEFAULTS,
 
-    getForUserId(userId) {
+    // Async to match the Postgres-backed implementation so callers don't
+    // branch on backend. The underlying read is still synchronous.
+    async getForUserId(userId) {
       const doc = store.readSnapshot();
       const row = doc.preferences[userId];
       return mergeDefaults(row);
@@ -83,7 +85,7 @@ function createPreferencesService(store) {
 
         doc.preferences[userId] = next;
       });
-      return this.getForUserId(userId);
+      return await this.getForUserId(userId);
     },
   };
 }

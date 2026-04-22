@@ -23,6 +23,21 @@ function createUserRepository(store) {
     },
 
     /**
+     * Server-side memory/notes for a user — free-text preferences the AI may
+     * read. Always fetched server-side from the authenticated user's record;
+     * never trusted from client input (that would be a prompt-injection hole).
+     * Returns '' if the user has no memory stored or the user is not found.
+     */
+    async getMemory(userId) {
+      if (!userId) return '';
+      const doc = store.readSnapshot();
+      const row = doc.users.find(u => u.id === userId);
+      if (!row) return '';
+      const m = typeof row.memory === 'string' ? row.memory.trim() : '';
+      return m;
+    },
+
+    /**
      * @returns {Promise<{ id: string, email: string, passwordHash: string, createdAt: string }>}
      */
     async createUser(email, passwordHash) {

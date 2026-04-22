@@ -8,7 +8,7 @@
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%231C272D'/%3E%3Crect x='6' y='8' width='5' height='16' fill='%23CBDF00'/%3E%3Crect x='14' y='8' width='5' height='11' fill='%23CBDF00'/%3E%3Cpolygon points='22,8 27,8 27,24 22,24 22,14' fill='%23CBDF00'/%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -42,43 +42,41 @@
         </div>
       </div>
       <div class="sidebar-nav">
-        <button class="btn-new-report" onclick="newReport()" title="New report">
+        <button class="btn-new-report" onclick="newReport()" title="New Chat">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
             <path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z"/>
           </svg>
-          <span class="btn-label">New report</span>
+          <span class="btn-label">New Chat</span>
         </button>
       </div>
       <div class="conv-list" id="conv-list"></div>
       <div class="sidebar-footer">
-        <!-- User row + settings trigger -->
-        <button type="button" class="sidebar-user-trigger" id="sidebar-user-trigger" onclick="openSettings()" title="Settings">
-          <div class="sidebar-user-avatar" id="sidebar-user-avatar">?</div>
-          <span class="sidebar-user-email" id="sidebar-user-email" title=""></span>
-          <svg class="sidebar-settings-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-            <path fill-rule="evenodd" d="M7.429 1.525a6.593 6.593 0 011.142 0c.036.003.108.036.137.146l.289 1.105c.147.56.55.967.997 1.189.174.086.341.183.501.29.417.278.97.423 1.53.28l1.094-.31c.11-.03.175.016.195.046.219.31.41.641.573.989.06.127.025.207-.062.27l-.958.683c-.482.345-.766.827-.775 1.336-.003.172-.011.343-.011.514s.008.342.011.514c.009.509.293.991.775 1.336l.958.683c.087.063.122.143.062.27a6.594 6.594 0 01-.573.99c-.02.029-.086.075-.195.045l-1.094-.31c-.56-.144-1.113 0-1.53.28-.16.107-.327.204-.502.29-.446.222-.85.629-.997 1.189l-.289 1.105c-.029.11-.1.143-.137.146a6.585 6.585 0 01-1.142 0c-.036-.003-.108-.036-.137-.146l-.289-1.105c-.147-.56-.55-.967-.997-1.189a4.502 4.502 0 01-.501-.29c-.417-.278-.97-.423-1.53-.28l-1.094.31c-.11.03-.175-.016-.195-.046a6.591 6.591 0 01-.573-.989c-.06-.127-.025-.207.062-.27l.958-.683c.482-.345.766-.827.775-1.336.003-.172.011-.343.011-.514s-.008-.342-.011-.514c-.009-.509-.293-.991-.775-1.336l-.958-.683c-.087-.063-.122-.143-.062-.27a6.59 6.59 0 01.573-.99c.02-.029.086-.075.195-.045l1.094.31c.56.144 1.113 0 1.53-.28.16-.107.327-.204.502-.29.446-.222.85-.629.997-1.189l.289-1.105c.029-.11.1-.143.137-.146zM8 10a2 2 0 100-4 2 2 0 000 4z"/>
-          </svg>
-        </button>
-        <!-- Mode toggle: Report vs Advisor — advisorMode is sent with /api/chat -->
-        <div class="mode-toggle">
-          <button class="mode-btn mode-report active" id="btn-mode-report" onclick="setAdvisorMode(false)" title="Report mode">
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M1.75 14.5a.75.75 0 010-1.5H2.5V4a.75.75 0 01.75-.75h2.5A.75.75 0 016.5 4v9h1V7a.75.75 0 01.75-.75h2.5A.75.75 0 0111.5 7v6h.75a.75.75 0 010 1.5h-10.5z"/>
-            </svg>
-            <span class="mode-label">Report</span>
-          </button>
-          <button class="mode-btn mode-advisor" id="btn-mode-advisor" onclick="setAdvisorMode(true)" title="Advisor mode">
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M2.75 2.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h1.5a.75.75 0 01.75.75v1.19l1.72-1.72a.75.75 0 01.53-.22h5.25a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25H2.75zM1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H8.56l-2.34 2.34a.75.75 0 01-1.28-.53V12h-.19A1.75 1.75 0 013 10.25v-7.5z"/>
-            </svg>
-            <span class="mode-label">Advisor</span>
-          </button>
-        </div>
         <button type="button" class="btn-view-all-reports" id="btn-sidebar-main-nav" onclick="handleSidebarMainNav()" title="All reports">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
             <path d="M1.5 1.75A.75.75 0 012.25 1h11.5a.75.75 0 01.75.75v1.5a.75.75 0 01-.75.75H2.25a.75.75 0 01-.75-.75V1.75zM2.25 5.5a.75.75 0 000 1.5h11.5a.75.75 0 000-1.5H2.25zM2 9.25a.75.75 0 01.75-.75h11.5a.75.75 0 010 1.5H2.75A.75.75 0 012 9.25zM2.75 12a.75.75 0 000 1.5h7.5a.75.75 0 000-1.5h-7.5z"/>
           </svg>
           <span class="btn-label" id="sidebar-main-nav-label">View All Reports</span>
+        </button>
+        <!-- Mode toggle: Agent vs Ask — pill slider -->
+        <div class="mode-toggle">
+          <button class="mode-btn mode-report active" id="btn-mode-report" onclick="setAdvisorMode(false)" title="Report mode">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M1.75 14.5a.75.75 0 010-1.5H2.5V4a.75.75 0 01.75-.75h2.5A.75.75 0 016.5 4v9h1V7a.75.75 0 01.75-.75h2.5A.75.75 0 0111.5 7v6h.75a.75.75 0 010 1.5h-10.5z"/>
+            </svg>
+            <span class="mode-label">Agent</span>
+          </button>
+          <button class="mode-btn mode-advisor" id="btn-mode-advisor" onclick="setAdvisorMode(true)" title="Advisor mode">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M2.75 2.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h1.5a.75.75 0 01.75.75v1.19l1.72-1.72a.75.75 0 01.53-.22h5.25a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25H2.75zM1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H8.56l-2.34 2.34a.75.75 0 01-1.28-.53V12h-.19A1.75 1.75 0 013 10.25v-7.5z"/>
+            </svg>
+            <span class="mode-label">Ask</span>
+          </button>
+        </div>
+        <!-- User row + profile trigger -->
+        <button type="button" class="sidebar-user-trigger" id="sidebar-user-trigger" onclick="openProfilePopover(this)" title="Profile">
+          <div class="sidebar-user-avatar" id="sidebar-user-avatar">?</div>
+          <span class="sidebar-user-email" id="sidebar-user-email" title=""></span>
+          <span class="sidebar-settings-icon" aria-hidden="true">⚙</span>
         </button>
       </div>
     </div>
@@ -88,7 +86,7 @@
   <div class="main-area">
 
     <!-- ── Chat column ── -->
-    <div class="chat-col" id="chat-col">
+    <div class="chat-col chat-col--empty" id="chat-col">
       <button type="button" class="view-report-tab" id="view-report-tab" onclick="reopenResultsPanel()" hidden aria-label="View report">View Report</button>
       <!-- Mobile-only top bar -->
       <div class="mobile-bar">
@@ -99,39 +97,67 @@
           Menu
         </button>
       </div>
-      <main class="chat-area" id="chat-area">
-        <div class="chat-inner" id="chat-inner">
-          <div class="welcome" id="welcome">
-            <h1>What report do you need?</h1>
-            <p>Describe what you need and I'll write the SQL for Metabase.</p>
-            <div class="welcome-chips">
-              <button class="chip" onclick="submitChip(this.dataset.q)" data-q="Show me revenue by client for the last 3 months">Show me revenue by client for the last 3 months</button>
-              <button class="chip" onclick="submitChip(this.dataset.q)" data-q="Which projects are over budget this quarter?">Which projects are over budget this quarter?</button>
-              <button class="chip" onclick="submitChip(this.dataset.q)" data-q="What is our gross profit by sector this year?">What is our gross profit by sector this year?</button>
-              <button class="chip" onclick="submitChip(this.dataset.q)" data-q="Show me utilisation by person for last month">Show me utilisation by person for last month</button>
+      <header class="app-tenant-header" id="app-tenant-header" aria-label="Workspace">
+        <span class="app-tenant-name" id="app-tenant-name">Projectworks</span>
+      </header>
+      <div class="chat-body" id="chat-body">
+        <main class="chat-area" id="chat-area">
+          <div class="chat-inner" id="chat-inner">
+            <div class="welcome" id="welcome">
+              <div class="welcome-hero" id="welcome-hero">
+                <div class="welcome-hero-row">
+                  <div class="welcome-brand-slot" id="welcome-brand-slot" aria-hidden="true">
+                    <svg class="welcome-mark-svg" width="52" height="52" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <rect x="1.25" y="1.25" width="49.5" height="49.5" rx="15" stroke="currentColor" stroke-opacity="0.22" stroke-width="1.25"/>
+                      <circle cx="26" cy="26" r="5.5" fill="currentColor" fill-opacity="0.35"/>
+                    </svg>
+                  </div>
+                  <div class="welcome-hero-text">
+                    <h1 class="welcome-headline" id="welcome-headline">What are we working on today?</h1>
+                    </div>
+                </div>
+              </div>
+              <div class="welcome-greeting" id="welcome-greeting"></div>
             </div>
           </div>
-        </div>
-      </main>
+        </main>
 
-      <div class="input-area">
-        <div class="input-wrap">
-          <div class="input-box">
-            <textarea
-              id="user-input"
-              placeholder="Describe the report you need..."
-              rows="1"
-              onkeydown="handleKeyDown(event)"
-              oninput="onInput(this)"
-            ></textarea>
-            <button class="btn-send" id="send-btn" onclick="sendMessage()" disabled aria-label="Send">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M8.22 2.97a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06l2.97-2.97H3.75a.75.75 0 010-1.5h7.44L8.22 4.03a.75.75 0 010-1.06z"/>
-              </svg>
-            </button>
-          </div>
-          <div class="input-hint">
-            <kbd>Enter</kbd> to send &nbsp;&middot;&nbsp; <kbd>Shift+Enter</kbd> for new line
+        <div class="composer-column" id="composer-column">
+          <div class="input-area">
+            <div class="input-wrap">
+              <div class="input-composer-row">
+                <div class="input-box">
+                  <input type="file" id="file-attach-input" accept="image/*,.pdf,.csv" style="display:none" onchange="handleAttachFile(this)">
+                  <button class="btn-attach" onclick="document.getElementById('file-attach-input').click()" aria-label="Attach file" title="Attach file">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                      <path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z"/>
+                    </svg>
+                  </button>
+                  <textarea
+                    id="user-input"
+                    placeholder="Message your assistant…"
+                    rows="1"
+                    onkeydown="handleKeyDown(event)"
+                    oninput="onInput(this)"
+                  ></textarea>
+                  <button class="btn-send" id="send-btn" onclick="sendMessage()" disabled aria-label="Send">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                      <path d="M3.47 7.78a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 0l4.25 4.25a.75.75 0 01-1.06 1.06L8.75 4.81v7.44a.75.75 0 01-1.5 0V4.81L4.53 7.78a.75.75 0 01-1.06 0z"/>
+                    </svg>
+                  </button>
+                </div>
+                <div class="input-help-wrap">
+                  <button class="input-help-btn" aria-label="About this assistant">?</button>
+                  <div class="input-help-tooltip" role="tooltip">Ask in natural language — I can work with your data, draft reports, and walk through how things connect.</div>
+                </div>
+              </div>
+            </div>
+            <div class="quick-start-suggestions" id="quick-start-suggestions" role="group" aria-label="Quick starts">
+              <button type="button" class="suggestion-pill" onclick="submitChip(this.dataset.q)" data-q="Which projects are tracking over budget this month?">Which projects are tracking over budget this month?</button>
+              <button type="button" class="suggestion-pill" onclick="submitChip(this.dataset.q)" data-q="Show me uninvoiced WIP by client">Show me uninvoiced WIP by client</button>
+              <button type="button" class="suggestion-pill" onclick="submitChip(this.dataset.q)" data-q="What is the utilisation for each team this month?">What is the utilisation for each team this month?</button>
+              <button type="button" class="suggestion-pill" onclick="submitChip(this.dataset.q)" data-q="Show me overdue AR with aging buckets">Show me overdue AR with aging buckets</button>
+            </div>
           </div>
         </div>
       </div>
@@ -225,6 +251,72 @@
             </div>
             <div class="sql-code-block">
               <pre id="rd-sql-output"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Settings Page ── -->
+    <div class="settings-page" id="settings-page" style="display:none">
+      <div class="settings-page-header">
+        <button type="button" class="btn-settings-page-back" onclick="closeSettingsPage()">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M9.78 12.78a.75.75 0 01-1.06 0L4.47 8.53a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 1.06L6.06 8l3.72 3.72a.75.75 0 010 1.06z"/>
+          </svg>
+          Back
+        </button>
+      </div>
+      <div class="settings-page-layout">
+        <nav class="settings-page-nav" aria-label="Settings sections">
+          <button class="settings-nav-item active" id="settings-nav-general" onclick="switchSettingsTab('general')">General</button>
+          <button class="settings-nav-item" id="settings-nav-faq" onclick="switchSettingsTab('faq')">FAQ</button>
+        </nav>
+        <div class="settings-page-content">
+          <!-- General tab -->
+          <div class="settings-tab-pane" id="settings-tab-general">
+            <section class="settings-page-section">
+              <h3 class="settings-page-section-title">Profile</h3>
+              <div class="settings-page-profile-row">
+                <div class="settings-page-avatar" id="settings-page-avatar">?</div>
+                <div class="settings-page-profile-info">
+                  <div class="settings-page-name" id="settings-page-name">—</div>
+                  <div class="settings-page-email-display" id="settings-page-email-display">—</div>
+                </div>
+              </div>
+            </section>
+            <section class="settings-page-section">
+              <h3 class="settings-page-section-title">Appearance</h3>
+              <p class="settings-page-placeholder">Theme options coming soon.</p>
+            </section>
+          </div>
+          <!-- FAQ tab -->
+          <div class="settings-tab-pane" id="settings-tab-faq" style="display:none">
+            <div class="faq-list">
+              <div class="faq-item">
+                <div class="faq-question">How do I use the AI assistant?</div>
+                <div class="faq-answer">Type your question in natural language in the chat input. For example: "Which projects are over budget this month?" or "Show me revenue by client for Q1."</div>
+              </div>
+              <div class="faq-item">
+                <div class="faq-question">What kind of questions can I ask?</div>
+                <div class="faq-answer">You can ask about project budgets, revenue, utilisation, invoicing, expenses, team capacity, and more. The assistant translates your question into a report against your live Projectworks data.</div>
+              </div>
+              <div class="faq-item">
+                <div class="faq-question">What is Agent mode vs Ask mode?</div>
+                <div class="faq-answer">Agent mode allows the assistant to take multi-step actions and build reports autonomously. Ask mode is a simpler Q&amp;A for quick one-off questions.</div>
+              </div>
+              <div class="faq-item">
+                <div class="faq-question">Can I save or export reports?</div>
+                <div class="faq-answer">Reports generated in a session are saved to your chat history. Export functionality will be available in a future update.</div>
+              </div>
+              <div class="faq-item">
+                <div class="faq-question">Who can see my reports?</div>
+                <div class="faq-answer">Reports are generated against your organisation's data and are only visible to users with access to your Projectworks workspace.</div>
+              </div>
+              <div class="faq-item">
+                <div class="faq-question">How do I find a previous report?</div>
+                <div class="faq-answer">Use the search bar in the sidebar to find past conversations, or scroll through your recent chat history.</div>
+              </div>
             </div>
           </div>
         </div>
@@ -484,6 +576,14 @@
     </div><!-- /settings-body -->
   </div><!-- /settings-inner -->
 </div><!-- /settings-panel -->
+
+<!-- Profile popover -->
+<div class="profile-popover" id="profile-popover" hidden>
+  <div class="profile-popover-email" id="profile-popover-email"></div>
+  <div class="profile-popover-divider"></div>
+  <button type="button" class="profile-popover-item" onclick="closeProfilePopover(); openSettingsPage()">Settings</button>
+  <a class="profile-popover-item" href="/logout">Log out</a>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="api.js"></script>

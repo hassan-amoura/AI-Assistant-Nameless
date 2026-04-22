@@ -7,12 +7,15 @@
     "node": ">=18"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "db:init": "node scripts/db-init.js",
+    "db:import": "node scripts/import-from-json.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "mssql": "^12.3.0"
+    "mssql": "^12.3.0",
+    "pg": "^8.20.0"
   }
 }

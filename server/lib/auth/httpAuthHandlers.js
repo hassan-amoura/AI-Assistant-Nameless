@@ -81,11 +81,11 @@ function createHttpAuthHandlers(deps) {
     return res.redirect('/login');
   }
 
-  function handleGetMe(req, res) {
+  async function handleGetMe(req, res) {
     if (!req.authUser) {
       return res.status(401).json({ error: 'Not authenticated' });
     }
-    const prefs = preferences.getForUserId(req.authUser.id);
+    const prefs = await preferences.getForUserId(req.authUser.id);
     return res.json({
       user: { id: req.authUser.id, email: req.authUser.email },
       preferences: prefs,

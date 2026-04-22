@@ -7,11 +7,19 @@ const { lastUserText } = require('./contextBuilder');
 const { REVENUE_MARGIN_GUIDANCE } = require('./revenueMarginGuidance');
 
 /**
- * Assembles system prompts with static vs dynamic boundaries for future
- * Anthropic prompt caching (large stable prefix first).
+ * Assembles system prompts with explicit static vs dynamic boundaries so the
+ * caller can apply Anthropic prompt caching markers. Returns the prompt as two
+ * ordered string arrays:
  *
- * Static: instructions block from CLAUDE.md (until schema marker).
- * Dynamic: schema slice OR table overview + optional template hint + mode suffix.
+ *   cachedBlocks  — large, stable content. Safe to cache_control: ephemeral.
+ *                   Order: [instructions, schemaSliceOrOverview, tenantBlock?]
+ *
+ *   dynamicBlocks — per-request / per-user content. NEVER cached.
+ *                   Order: [templateHint?, modeSuffix, revenueMarginGuidance?]
+ *
+ * The caller (see anthropicClient.buildSystemWithCache) composes the Anthropic
+ * system array by mapping cachedBlocks → cache_control: ephemeral blocks and
+ * dynamicBlocks → plain text blocks, preserving order.
  */
 
 const ADVISOR_MODE_SUFFIX = `
@@ -45,21 +53,31 @@ function pickSchemaBody(liveSchema, staticSchemaSection) {
 }
 
 /**
- * @returns {{ system: string, route: string, family: string, templateId: string|null }}
+ * @returns {{
+ *   cachedBlocks: string[],
+ *   dynamicBlocks: string[],
+ *   route: string,
+ *   family: string,
+ *   templateId: string|null,
+ * }}
  */
-function buildChatSystemForRequest({ route, family, liveSchema, messages }) {
+function buildChatSystemForRequest({ route, family, liveSchema, messages, tenantContextBlock }) {
   const { instructions, schemaSection } = splitClaudeMd();
   const fullSchema = pickSchemaBody(liveSchema, schemaSection);
   const overview = schemaTableOverview(fullSchema);
   const lastUser = lastUserText(messages);
+  const tenantBlock = (tenantContextBlock || '').trim();
 
   if (route === 'data_advisor') {
-    const system =
-      instructions +
-      '\n' +
-      overview +
-      ADVISOR_MODE_SUFFIX;
-    return { system, route, family: family || 'general', templateId: null };
+    const cachedBlocks = [instructions, overview];
+    if (tenantBlock) cachedBlocks.push(tenantBlock);
+    return {
+      cachedBlocks,
+      dynamicBlocks: [ADVISOR_MODE_SUFFIX],
+      route,
+      family: family || 'general',
+      templateId: null,
+    };
   }
 
   const sliced = sliceSchemaSection(fullSchema, family || 'general');
@@ -68,16 +86,17 @@ function buildChatSystemForRequest({ route, family, liveSchema, messages }) {
     ? `\n## Template hint (${hintObj.id})\n${hintObj.hint}\n`
     : '';
 
-  const system =
-    instructions +
-    '\n' +
-    sliced +
-    templateHint +
-    ENGINE_MODE_SUFFIX +
-    REVENUE_MARGIN_GUIDANCE;
+  const cachedBlocks = [instructions, sliced];
+  if (tenantBlock) cachedBlocks.push(tenantBlock);
+
+  const dynamicBlocks = [];
+  if (templateHint) dynamicBlocks.push(templateHint);
+  dynamicBlocks.push(ENGINE_MODE_SUFFIX);
+  dynamicBlocks.push(REVENUE_MARGIN_GUIDANCE);
 
   return {
-    system,
+    cachedBlocks,
+    dynamicBlocks,
     route: 'sql_engine',
     family: family || 'general',
     templateId: hintObj ? hintObj.id : null,
