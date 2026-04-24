@@ -1,10 +1,27 @@
 // app.js — UI logic, conversation state, message rendering, report library
 // Depends on api.js being loaded first (sendToAI, extractSQL).
 
+/* ── Copy button SVG ────────────────────────────────── */
+
+const COPY_BTN_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M10 8h10s2 0 2 2v10s0 2 -2 2H10s-2 0 -2 -2V10s0 -2 2 -2" stroke-width="2"></path><path d="M4 16c-1.1 0 -2 -0.9 -2 -2V4c0 -1.1 0.9 -2 2 -2h10c1.1 0 2 0.9 2 2" stroke-width="2"></path></svg>`;
+
 /* ── marked configuration ───────────────────────────── */
 
 if (typeof marked !== 'undefined') {
-  marked.use({ breaks: true });
+  marked.use({
+    breaks: true,
+    renderer: {
+      code(token) {
+        const text = token.text || '';
+        const lang = token.lang || '';
+        const escaped = text
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const langClass = lang ? ` class="language-${lang}"` : '';
+        return `<div class="chat-code-wrap"><pre><code${langClass}>${escaped}</code></pre><button class="btn-copy-float" data-tooltip="Copy" aria-label="Copy" onclick="copyCodeBlock(this)">${COPY_BTN_SVG}</button></div>`;
+      }
+    }
+  });
 }
 
 /* ── State ─────────────────────────────────────────── */
@@ -13,12 +30,12 @@ let conversations = [];
 let activeId = null;
 
 /** Explicit library saves only (not autosaved generation). */
-const MANUAL_REPORTS_KEY = 'pw_reports_manual';
-
+const MANUAL_REPORTS_KEY         = 'pw_reports_manual';
 const ARCHIVED_CONVERSATIONS_KEY = 'pw_archived_conversations';
 const DELETED_CONVERSATIONS_KEY  = 'pw_deleted_conversations';
 const PREFERENCES_KEY            = 'pw_preferences';
 const USER_MEMORY_KEY            = 'pw_user_memory';
+const SIDEBAR_COLLAPSED_KEY      = 'pw_sidebar_collapsed';
 const DELETED_PURGE_DAYS         = 30;
 
 /** Persisted UI for same-tab refresh (not used on first tab load). */
@@ -45,6 +62,16 @@ const PW_TENANT_UI = Object.freeze({
  */
 let pwCurrentUser = null;
 let pwPreferences = null;
+
+/**
+ * Namespaces a localStorage/sessionStorage key by the logged-in user's ID so
+ * that two different users on the same browser never share stored data.
+ * Falls back to the bare key only when no user is resolved (should not happen
+ * in normal flow since auth is awaited before any storage access).
+ */
+function userKey(base) {
+  return pwCurrentUser ? `${base}:${pwCurrentUser.id}` : base;
+}
 
 /** Main workspace: chat, library list, or saved-report detail (not modal). */
 let appView = 'chat';
@@ -103,7 +130,7 @@ function renderConversationList(convs, showSections = false) {
 function buildConvItemHTML(c) {
   const isActive = c.id === activeId;
   const pinIcon = c.pinned
-    ? `<span class="conv-pin-icon" aria-label="Pinned"><svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor"><path d="M4.456.734a1.75 1.75 0 012.826.504l.613 1.327a3.08 3.08 0 002.084 1.707l2.454.584c1.332.317 1.8 1.972.832 2.94L11.06 9h1.44a.75.75 0 010 1.5H9.75v3.75a.75.75 0 01-1.5 0V10.5H4.5a.75.75 0 010-1.5h1.44L3.735 6.797c-.968-.968-.5-2.623.832-2.94l2.454-.584A3.08 3.08 0 009.105 1.57L8.491.241A.25.25 0 008.086.185L4.456.734z"/></svg></span>`
+    ? `<span class="conv-pin-icon" aria-label="Pinned"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="17" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg></span>`
     : '';
   return `
     <div class="conv-item ${isActive ? 'active' : ''} ${c.pinned ? 'conv-item--pinned' : ''}"
@@ -111,11 +138,6 @@ function buildConvItemHTML(c) {
          onclick="switchTo(${c.id})"
          data-tooltip="${escapeAttr(c.title)}"
          title="${escapeAttr(c.title)}">
-      <span class="conv-item-icon">
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M2.75 2.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h1.5a.75.75 0 01.75.75v1.19l1.72-1.72a.75.75 0 01.53-.22h5.25a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25H2.75zM1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H8.56l-2.34 2.34a.75.75 0 01-1.28-.53V12h-.19A1.75 1.75 0 013 10.25v-7.5z"/>
-        </svg>
-      </span>
       ${pinIcon}
       <span class="conv-title">${escapeHTML(c.title)}</span>
       <button type="button" class="conv-menu-btn" onclick="openConvMenu(${c.id}, this, event)" title="More options" aria-label="Conversation options">
@@ -260,12 +282,12 @@ function deleteConversation(id) {
 /* ── Archived conversations ─────────────────────────── */
 
 function loadArchivedConversations() {
-  try { return JSON.parse(localStorage.getItem(ARCHIVED_CONVERSATIONS_KEY) || '[]'); }
+  try { return JSON.parse(localStorage.getItem(userKey(ARCHIVED_CONVERSATIONS_KEY)) || '[]'); }
   catch (_) { return []; }
 }
 
 function saveArchivedConversations(arcs) {
-  try { localStorage.setItem(ARCHIVED_CONVERSATIONS_KEY, JSON.stringify(arcs.slice(0, 100))); }
+  try { localStorage.setItem(userKey(ARCHIVED_CONVERSATIONS_KEY), JSON.stringify(arcs.slice(0, 100))); }
   catch (_) {}
 }
 
@@ -284,12 +306,12 @@ function restoreArchivedConversation(archId) {
 /* ── Recently deleted conversations ─────────────────── */
 
 function loadDeletedConversations() {
-  try { return JSON.parse(localStorage.getItem(DELETED_CONVERSATIONS_KEY) || '[]'); }
+  try { return JSON.parse(localStorage.getItem(userKey(DELETED_CONVERSATIONS_KEY)) || '[]'); }
   catch (_) { return []; }
 }
 
 function saveDeletedConversations(dels) {
-  try { localStorage.setItem(DELETED_CONVERSATIONS_KEY, JSON.stringify(dels.slice(0, 100))); }
+  try { localStorage.setItem(userKey(DELETED_CONVERSATIONS_KEY), JSON.stringify(dels.slice(0, 100))); }
   catch (_) {}
 }
 
@@ -320,7 +342,7 @@ function updateCollapseToggleIcon(isCollapsed) {
 }
 
 function initSidebar() {
-  if (localStorage.getItem('pw_sidebar_collapsed') === '1') {
+  if (localStorage.getItem(userKey(SIDEBAR_COLLAPSED_KEY)) === '1') {
     const sidebar = document.getElementById('sidebar');
     if (sidebar) sidebar.classList.add('collapsed');
     updateCollapseToggleIcon(true);
@@ -382,6 +404,9 @@ function switchTo(id) {
     leaveReportDetailShell();
     appView = 'chat';
     exitLibraryLayoutToChat();
+  } else if (appView === 'library') {
+    exitLibraryLayoutToChat();
+    appView = 'chat';
   }
   activeId = id;
   renderSidebar();
@@ -405,6 +430,9 @@ function newReport() {
     leaveReportDetailShell();
     appView = 'chat';
     exitLibraryLayoutToChat();
+  } else if (appView === 'library') {
+    exitLibraryLayoutToChat();
+    appView = 'chat';
   }
   activeId = null;
   renderSidebar();
@@ -431,7 +459,7 @@ function toggleSidebar() {
     return;
   }
   const isCollapsed = sidebar.classList.toggle('collapsed');
-  localStorage.setItem('pw_sidebar_collapsed', isCollapsed ? '1' : '0');
+  localStorage.setItem(userKey(SIDEBAR_COLLAPSED_KEY), isCollapsed ? '1' : '0');
   updateCollapseToggleIcon(isCollapsed);
 }
 
@@ -479,14 +507,23 @@ function renderMessages() {
   syncChatLayoutState();
 }
 
+const PW_AVATAR_SVG = `<svg viewBox="20 15 413 293" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="width:70%;height:70%;">
+  <path d="M66.5723 78.3661H0V322.464H66.5723V78.3661Z" fill="white"/>
+  <path d="M257.422 78.3661H195.288V242.578H257.422V78.3661Z" fill="white"/>
+  <path fill-rule="evenodd" clip-rule="evenodd" d="M386.12 45.3766L452.693 0V242.57H386.12V45.3766Z" fill="white"/>
+  <path fill-rule="evenodd" clip-rule="evenodd" d="M288.493 111.913L355.066 66.5366V242.569H288.493V111.913Z" fill="white"/>
+  <path fill-rule="evenodd" clip-rule="evenodd" d="M97.6453 78.3661H164.218V196.636L97.6453 242.012V78.3661Z" fill="white"/>
+</svg>`;
+
 function buildMsgEl(role, content) {
   const cssRole = role === 'assistant' ? 'ai' : role;
   const el = document.createElement('div');
   el.className = `message ${cssRole}`;
   const bubbleContent = role === 'assistant' ? processAIContent(content) : escapeHTML(content);
+  const avatarInner = role === 'assistant' ? PW_AVATAR_SVG : 'U';
   el.innerHTML = `
     <div class="message-header">
-      <div class="avatar ${cssRole}">${role === 'assistant' ? 'AI' : 'U'}</div>
+      <div class="avatar ${cssRole}">${avatarInner}</div>
       <span class="message-sender">${role === 'assistant' ? 'PW Report Builder' : 'You'}</span>
     </div>
     <div class="message-body">
@@ -587,7 +624,7 @@ function appendTyping() {
   el.className = 'message ai';
   el.innerHTML = `
     <div class="message-header">
-      <div class="avatar ai">AI</div>
+      <div class="avatar ai avatar--pulsing">${PW_AVATAR_SVG}</div>
       <span class="message-sender">PW Report Builder</span>
     </div>
     <div class="message-body">
@@ -619,17 +656,35 @@ function clearTypingRowIdFromMessage(aiBubbleEl) {
   if (row && row.id === 'typing-row') row.removeAttribute('id');
 }
 
+/* ── Abort controller for in-flight requests ────────── */
+
+let _currentAbortController = null;
+
+function stopGeneration() {
+  if (_currentAbortController) {
+    _currentAbortController.abort();
+    _currentAbortController = null;
+  }
+}
+
 /* ── Send button state ──────────────────────────────── */
 
 const SEND_ARROW_SVG = `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3.47 7.78a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 0l4.25 4.25a.75.75 0 01-1.06 1.06L8.75 4.81v7.44a.75.75 0 01-1.5 0V4.81L4.53 7.78a.75.75 0 01-1.06 0z"/></svg>`;
+const STOP_SQUARE_SVG = `<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="2"/></svg>`;
+
+const stopBtn = document.getElementById('stop-btn');
 
 function setSendBtnLoading() {
-  sendBtn.disabled = true;
-  sendBtn.innerHTML = '<span class="spin">⟳</span>';
+  sendBtn.style.display = 'none';
+  if (stopBtn) stopBtn.style.display = 'flex';
+  inputEl.disabled = true;
 }
 
 function setSendBtnIdle() {
+  if (stopBtn) stopBtn.style.display = 'none';
+  sendBtn.style.display = '';
   sendBtn.innerHTML = SEND_ARROW_SVG;
+  inputEl.disabled = false;
   sendBtn.disabled = inputEl.value.trim().length === 0;
 }
 
@@ -639,14 +694,16 @@ function friendlyError(raw) {
   if (!raw) return 'Something went wrong. Please try again.';
   const r = String(raw).toLowerCase();
   if (r.includes('overloaded') || r.includes('529'))
-    return 'The AI is overloaded right now. Wait a moment and try again.';
+    return 'The AI service is busy right now. Please wait a moment and try again.';
   if (r.includes('rate limit') || r.includes('429'))
-    return 'Rate limit reached. Please wait a moment before sending another message.';
-  if (r.includes('401') || r.includes('unauthorized') || r.includes('api key'))
-    return 'API key error. Check ANTHROPIC_API_KEY in .env.';
-  if (r.includes('network') || r.includes('failed to fetch') || r.includes('econnrefused'))
-    return 'Cannot reach the server. Is it running?';
-  return `Something went wrong: ${raw}`;
+    return 'Too many requests. Please wait a moment before sending another message.';
+  if (r.includes('session') || r.includes('sign in') || r.includes('401') || r.includes('unauthorized'))
+    return "We couldn't verify your session. Please sign in again.";
+  if (r.includes('network') || r.includes('failed to fetch') || r.includes('econnrefused') || r.includes('connection'))
+    return 'Network error — please check your connection and try again.';
+  if (r.includes("ai service") || r.includes("configured") || r.includes("administrator"))
+    return raw;
+  return 'Something went wrong on our end. Please try again in a moment.';
 }
 
 /* ── Conversation persistence ───────────────────────── */
@@ -663,8 +720,8 @@ function saveConversations() {
       reportLibrarySaved: !!c.reportLibrarySaved,
       pinned: !!c.pinned,
     }));
-    localStorage.setItem('pw_conversations', JSON.stringify(toSave));
-    localStorage.setItem('pw_active_id', String(activeId));
+    localStorage.setItem(userKey('pw_conversations'), JSON.stringify(toSave));
+    localStorage.setItem(userKey('pw_active_id'), String(activeId));
   } catch (_) {}
   persistUiSnapshot();
 }
@@ -675,7 +732,7 @@ function persistUiSnapshot() {
     const chip = document.querySelector('.filter-chip.active');
     if (chip && chip.dataset.filter) libraryFilter = chip.dataset.filter;
     localStorage.setItem(
-      UI_SNAPSHOT_KEY,
+      userKey(UI_SNAPSHOT_KEY),
       JSON.stringify({
         v: 1,
         appView,
@@ -804,7 +861,7 @@ function loadConversations() {
   purgeExpiredDeletedConversations();
 
   try {
-    const raw = localStorage.getItem('pw_conversations');
+    const raw = localStorage.getItem(userKey('pw_conversations'));
     if (raw) conversations = JSON.parse(raw);
   } catch (_) {
     conversations = [];
@@ -814,7 +871,21 @@ function loadConversations() {
     if (c.pinned === undefined) c.pinned = false;
   });
 
-  const tabSessionActive = sessionStorage.getItem(TAB_SESSION_KEY) === '1';
+  // Two signals can indicate a fresh login (vs a page refresh):
+  //   1. Login page clears pw_tab_session_started* from sessionStorage before redirect (primary)
+  //   2. Server appends ?fresh=1 to the post-login redirect URL (belt-and-suspenders)
+  // Either signal alone is sufficient — both are checked here.
+  const isFreshLogin = new URLSearchParams(location.search).get('fresh') === '1';
+  if (isFreshLogin) {
+    history.replaceState(null, '', location.pathname + location.hash);
+    // Remove all variants of the tab-session key regardless of user-ID suffix.
+    for (let _i = sessionStorage.length - 1; _i >= 0; _i--) {
+      const _k = sessionStorage.key(_i);
+      if (_k && _k.startsWith(TAB_SESSION_KEY)) sessionStorage.removeItem(_k);
+    }
+  }
+
+  const tabSessionActive = !isFreshLogin && sessionStorage.getItem(userKey(TAB_SESSION_KEY)) === '1';
 
   if (!tabSessionActive) {
     activeId = null;
@@ -829,14 +900,14 @@ function loadConversations() {
     syncSaveReportButtonUI();
     updateViewReportTab();
     updateSidebarNavLabels();
-    sessionStorage.setItem(TAB_SESSION_KEY, '1');
+    sessionStorage.setItem(userKey(TAB_SESSION_KEY), '1');
     persistUiSnapshot();
     return;
   }
 
   let snap = null;
   try {
-    snap = JSON.parse(localStorage.getItem(UI_SNAPSHOT_KEY) || 'null');
+    snap = JSON.parse(localStorage.getItem(userKey(UI_SNAPSHOT_KEY)) || 'null');
   } catch (_) {
     snap = null;
   }
@@ -844,7 +915,7 @@ function loadConversations() {
   if (snap && typeof snap === 'object' && snap.v === 1) {
     restoreUiFromSnapshot(snap);
   } else {
-    const savedId = Number(localStorage.getItem('pw_active_id'));
+    const savedId = Number(localStorage.getItem(userKey('pw_active_id')));
     if (savedId && conversations.find(c => c.id === savedId)) activeId = savedId;
     else activeId = null;
     appView = 'chat';
@@ -883,7 +954,7 @@ function inferReportCategory(sql, title) {
 
 function loadReports() {
   try {
-    return JSON.parse(localStorage.getItem(MANUAL_REPORTS_KEY) || '[]');
+    return JSON.parse(localStorage.getItem(userKey(MANUAL_REPORTS_KEY)) || '[]');
   } catch (_) {
     return [];
   }
@@ -916,7 +987,7 @@ function saveReportToLibraryManual() {
   try {
     const reports = loadReports();
     reports.unshift(record);
-    localStorage.setItem(MANUAL_REPORTS_KEY, JSON.stringify(reports.slice(0, 50)));
+    localStorage.setItem(userKey(MANUAL_REPORTS_KEY), JSON.stringify(reports.slice(0, 50)));
   } catch (_) {
     return;
   }
@@ -981,6 +1052,53 @@ function reopenResultsPanel() {
   const conv = getActive();
   if (!hasCompletedReport(conv)) return;
   openSQLPanel(getReportSql(conv), conv.title, getReportCategoryForMock(conv));
+}
+
+function viewReportPage() {
+  const conv = getActive();
+  if (!hasCompletedReport(conv)) return;
+
+  const r = {
+    id: null,
+    title: conv.title || 'Report',
+    sql: getReportSql(conv),
+    reasoning: getReportReasoning(conv),
+    category: getReportCategoryForMock(conv),
+  };
+
+  detailLibraryEntry = null;
+  appView = 'report-detail';
+  reportDetailWorkspace = 'results';
+
+  const chatCol = document.getElementById('chat-col');
+  if (chatCol) {
+    chatCol.classList.add('main-fade-out');
+    chatCol.offsetHeight;
+    setTimeout(() => {
+      chatCol.style.display = 'none';
+      chatCol.classList.remove('main-fade-out');
+    }, 220);
+  }
+
+  const lib = document.getElementById('library-mode');
+  if (lib && lib.style.display !== 'none') {
+    lib.classList.remove('lib-visible');
+    setTimeout(() => { lib.style.display = 'none'; }, 220);
+  }
+
+  sqlPanel.classList.remove('open');
+  sqlPanel.style.display = 'none';
+
+  const detail = document.getElementById('report-detail-mode');
+  detail.style.display = 'flex';
+  detail.offsetHeight;
+  detail.classList.add('rd-visible');
+
+  populateReportDetailContent(r);
+  switchReportDetailWorkspace('results', false);
+  updateSidebarNavLabels();
+  updateViewReportTab();
+  persistUiSnapshot();
 }
 
 function exitLibraryLayoutToChat() {
@@ -1338,18 +1456,15 @@ function copyReportDetailSql() {
   if (!raw) return;
   navigator.clipboard.writeText(raw).then(() => {
     if (!btn) return;
-    btn.classList.add('copied');
-    btn.innerHTML = iconCheck() + ' Copied!';
-    setTimeout(() => {
-      btn.classList.remove('copied');
-      resetRdCopyBtn();
-    }, 2000);
+    btn.setAttribute('data-tooltip', 'Copied!');
+    clearTimeout(btn._copyTimer);
+    btn._copyTimer = setTimeout(() => btn.setAttribute('data-tooltip', 'Copy'), 2000);
   });
 }
 
 function resetRdCopyBtn() {
   const btn = document.getElementById('rd-btn-copy-sql');
-  if (btn) btn.innerHTML = iconCopy() + ' Copy SQL';
+  if (btn) btn.setAttribute('data-tooltip', 'Copy');
 }
 
 function downloadReportFromDetail() {
@@ -1433,14 +1548,20 @@ function sendMessage() {
   let aiBubble = null;
   let streamAccumulated = '';
 
+  _currentAbortController = new AbortController();
+
   sendToAI(conv.messages, {
     advisorMode,
+    signal: _currentAbortController.signal,
     onChunk(chunk) {
       if (!aiBubble) {
         const typingRow = document.getElementById('typing-row');
         const bubble = typingRow && typingRow.querySelector('.bubble.typing-placeholder-bubble');
         if (bubble) {
           aiBubble = bubble;
+          // Stop avatar pulsing when first chunk arrives
+          const avatarEl = typingRow && typingRow.querySelector('.avatar--pulsing');
+          if (avatarEl) avatarEl.classList.remove('avatar--pulsing');
           const stack = bubble.querySelector('.typing-pw-stack');
           const sink = bubble.querySelector('.typing-stream-sink');
           if (stack) stack.classList.add('typing-pw-stack--exit');
@@ -1484,6 +1605,7 @@ function sendMessage() {
     },
 
     onDone({ sql, reasoning, raw }) {
+      _currentAbortController = null;
       clearTypingRowIfDetached(null, aiBubble);
 
       if (!raw.trim()) {
@@ -1526,13 +1648,41 @@ function sendMessage() {
       saveConversations();
       setSendBtnIdle();
       scrollDown();
+
+      // Auto-extract memorable facts from this turn (fire-and-forget)
+      const userTurn = conv.messages.slice(-2).find(m => m.role === 'user');
+      if (userTurn && raw) {
+        extractMemoryFromTurn(userTurn.content, raw).catch(() => {});
+      }
     },
 
     onError(errMsg) {
+      _currentAbortController = null;
       const errRow = aiBubble && aiBubble.closest ? aiBubble.closest('.message.ai') : null;
       if (errRow) errRow.remove();
       else document.getElementById('typing-row')?.remove();
       chatInner.appendChild(buildMsgEl('assistant', `<span class="error-bubble">${escapeHTML(friendlyError(errMsg))}</span>`));
+      setSendBtnIdle(); scrollDown();
+    },
+
+    onAborted() {
+      _currentAbortController = null;
+      // Clean up the in-progress bubble
+      const typingRow = document.getElementById('typing-row');
+      if (typingRow) typingRow.remove();
+      if (aiBubble) {
+        aiBubble.classList.remove('typing-cursor');
+        const row = aiBubble.closest ? aiBubble.closest('.message.ai') : null;
+        if (streamAccumulated.trim()) {
+          // Keep whatever was streamed, mark it as stopped
+          if (row) row.id && row.removeAttribute('id');
+          aiBubble.innerHTML = processAIContent(streamAccumulated) +
+            '<span class="stopped-indicator"> ···  <span class="stopped-label">Stopped</span></span>';
+        } else {
+          // Nothing streamed — remove the whole row
+          if (row) row.remove();
+        }
+      }
       setSendBtnIdle(); scrollDown();
     },
   });
@@ -1583,15 +1733,17 @@ function copySQLPanel() {
   const btn = document.getElementById('btn-copy-panel');
   const raw = sqlOutput._rawSQL || sqlOutput.textContent;
   navigator.clipboard.writeText(raw).then(() => {
-    btn.classList.add('copied');
-    btn.innerHTML = iconCheck() + ' Copied!';
-    setTimeout(() => { btn.classList.remove('copied'); resetCopyBtn(); }, 2000);
+    if (btn) {
+      btn.setAttribute('data-tooltip', 'Copied!');
+      clearTimeout(btn._copyTimer);
+      btn._copyTimer = setTimeout(() => btn.setAttribute('data-tooltip', 'Copy'), 2000);
+    }
   });
 }
 
 function resetCopyBtn() {
   const btn = document.getElementById('btn-copy-panel');
-  if (btn) btn.innerHTML = iconCopy() + ' Copy SQL';
+  if (btn) btn.setAttribute('data-tooltip', 'Copy');
 }
 
 /* ── Mock results data ───────────────────────────────── */
@@ -1810,7 +1962,23 @@ function downloadReport() {
 }
 
 function iconCopy() {
-  return `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>`;
+  return COPY_BTN_SVG;
+}
+
+function copyCodeBlock(btn) {
+  const wrap = btn.closest('.chat-code-wrap') || btn.closest('.sql-code-block');
+  const pre = wrap && wrap.querySelector('pre');
+  const text = (pre && pre._rawSQL) || (pre && pre.textContent) || '';
+  if (!text) return;
+  navigator.clipboard.writeText(text.trim()).then(() => {
+    btn.setAttribute('data-tooltip', 'Copied!');
+    clearTimeout(btn._copyTimer);
+    btn._copyTimer = setTimeout(() => btn.setAttribute('data-tooltip', 'Copy'), 2000);
+  }).catch(() => {
+    btn.setAttribute('data-tooltip', 'Failed');
+    clearTimeout(btn._copyTimer);
+    btn._copyTimer = setTimeout(() => btn.setAttribute('data-tooltip', 'Copy'), 2000);
+  });
 }
 
 function iconCheck() {
@@ -1969,11 +2137,9 @@ function openSettings() {
   panel.setAttribute('aria-hidden', 'false');
   updateSettingsProfileUI();
   applyPreferencesUI(loadPreferences());
-  const mem = loadMemory();
-  const memTA = document.getElementById('settings-memory');
-  if (memTA) { memTA.value = mem; updateMemoryCounter(); }
   renderSettingsArchived();
   renderSettingsDeleted();
+  loadMemoryFromServer().then(() => { renderMemoryItems(); updateMemoryCounter(); });
 }
 
 function closeSettings() {
@@ -2043,7 +2209,7 @@ function renderSettingsDeleted() {
 // NOTE: pw_preferences values will be injected into the system prompt in a future update.
 
 function loadPreferences() {
-  try { return JSON.parse(localStorage.getItem(PREFERENCES_KEY) || '{}'); }
+  try { return JSON.parse(localStorage.getItem(userKey(PREFERENCES_KEY)) || '{}'); }
   catch (_) { return {}; }
 }
 
@@ -2053,7 +2219,7 @@ function savePreferences() {
   const reasoningToggle = document.getElementById('pref-reasoning-toggle');
   const reasoningExpanded = reasoningToggle?.getAttribute('aria-checked') === 'true';
   const prefs = { defaultDateRange: dateRange, revenueDefinition: revenueDef, reasoningExpanded };
-  try { localStorage.setItem(PREFERENCES_KEY, JSON.stringify(prefs)); }
+  try { localStorage.setItem(userKey(PREFERENCES_KEY), JSON.stringify(prefs)); }
   catch (_) {}
 }
 
@@ -2074,30 +2240,82 @@ function toggleReasoningPref() {
   savePreferences();
 }
 
-/* ── Memory (localStorage, injected into system prompt) ─ */
+/* ── Memory (server-side, per user) ─────────────────── */
 
-function loadMemory() {
-  return localStorage.getItem(USER_MEMORY_KEY) || '';
+let _memoryItems = [];
+
+async function loadMemoryFromServer() {
+  try {
+    const r = await fetch('/api/memory', { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const data = await r.json();
+    _memoryItems = Array.isArray(data.items) ? data.items : [];
+  } catch (_) {}
 }
 
-function saveMemory() {
-  const memTA = document.getElementById('settings-memory');
-  if (!memTA) return;
-  try { localStorage.setItem(USER_MEMORY_KEY, memTA.value.slice(0, 2000)); }
-  catch (_) {}
-  const btn = document.getElementById('btn-save-memory');
-  if (btn) {
-    const orig = btn.textContent;
-    btn.textContent = 'Saved ✓';
-    setTimeout(() => { btn.textContent = orig; }, 1500);
+async function saveMemoryToServer(items) {
+  try {
+    await fetch('/api/memory', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ items }),
+    });
+  } catch (_) {}
+}
+
+async function clearAllMemory() {
+  try {
+    await fetch('/api/memory', { method: 'DELETE', credentials: 'same-origin' });
+    _memoryItems = [];
+    renderMemoryItems();
+  } catch (_) {}
+}
+
+async function deleteMemoryItem(index) {
+  _memoryItems = _memoryItems.filter((_, i) => i !== index);
+  await saveMemoryToServer(_memoryItems);
+  renderMemoryItems();
+}
+
+function renderMemoryItems() {
+  const container = document.getElementById('memory-items-list');
+  if (!container) return;
+  if (!_memoryItems.length) {
+    container.innerHTML = '<p class="settings-empty">No memory saved yet. Add something below.</p>';
+    return;
   }
+  container.innerHTML = _memoryItems.map((item, i) => `
+    <div class="memory-item">
+      <span class="memory-item-text">${escapeHTML(item)}</span>
+      <button type="button" class="btn-memory-delete" onclick="deleteMemoryItem(${i})" aria-label="Delete this memory item" title="Delete">
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/>
+        </svg>
+      </button>
+    </div>`).join('');
+}
+
+/* Keep legacy localStorage helpers for migration path */
+function loadMemory() {
+  return localStorage.getItem(userKey(USER_MEMORY_KEY)) || '';
 }
 
 function updateMemoryCounter() {
-  const memTA   = document.getElementById('settings-memory');
   const counter = document.getElementById('settings-memory-counter');
-  if (!memTA || !counter) return;
-  counter.textContent = `${memTA.value.length} / 2000`;
+  if (counter) counter.textContent = `${_memoryItems.length} item${_memoryItems.length !== 1 ? 's' : ''}`;
+}
+
+async function extractMemoryFromTurn(userMessage, assistantMessage) {
+  if (!userMessage || !assistantMessage) return;
+  try {
+    await fetch('/api/memory/extract', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ userMessage, assistantMessage }),
+    });
+  } catch (_) {}
 }
 
 /* ── Auth session + preferences (server) ─────────────── */
@@ -2169,10 +2387,15 @@ async function loadGreeting() {
 /* ── Init ────────────────────────────────────────────── */
 
 applyTenantShell();
-loadConversations();
-initSidebar();
-loadAuthSession();
-loadGreeting();
+// Auth must resolve before loading any user-scoped storage. loadConversations()
+// and initSidebar() read localStorage keys namespaced by pwCurrentUser.id, so
+// they must run after the user is known.
+(async () => {
+  await loadAuthSession();
+  loadConversations();
+  initSidebar();
+  loadGreeting();
+})();
 
 /* ── Profile popover ─────────────────────────────────── */
 
@@ -2250,10 +2473,24 @@ function _updateSettingsPageProfile() {
 }
 
 function switchSettingsTab(tab) {
-  ['general', 'faq'].forEach(t => {
+  ['general', 'faq', 'memory'].forEach(t => {
     const pane = document.getElementById('settings-tab-' + t);
     const nav  = document.getElementById('settings-nav-' + t);
     if (pane) pane.style.display = t === tab ? 'block' : 'none';
     if (nav)  nav.classList.toggle('active', t === tab);
   });
+  if (tab === 'memory') {
+    loadMemoryFromServer().then(() => renderMemoryItems());
+  }
+}
+
+async function addMemoryItem() {
+  const input = document.getElementById('memory-add-input');
+  if (!input) return;
+  const val = input.value.trim();
+  if (!val) return;
+  _memoryItems.push(val);
+  await saveMemoryToServer(_memoryItems);
+  renderMemoryItems();
+  input.value = '';
 }

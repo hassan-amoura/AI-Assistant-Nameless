@@ -40,6 +40,42 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 
+// ── Startup env checks ────────────────────────────────────────────────────────
+// Warn (never crash) for each missing variable. The app degrades gracefully:
+// missing DB vars → static schema; missing SESSION_SECRET → unsigned cookies.
+//
+// STAGING/PRODUCTION CHECKLIST:
+// ✓ ANTHROPIC_API_KEY — required for AI chat to work
+// ✓ DATABASE_URL — required for Postgres persistence (users, sessions, prefs)
+// ✓ SESSION_SECRET — required for secure session cookies
+// ○ INTERNAL_SIGNUP_DOMAINS — controls who can self-register
+// ○ ALLOWED_EMBED_DOMAINS — needed if embedding in iframe
+{
+  const isProd = process.env.NODE_ENV === 'production';
+  const checks = [
+    ['ANTHROPIC_API_KEY',      'AI chat disabled, API calls will fail', true],
+    ['DATABASE_URL',           'falling back to JSON file store — set for staging/production', isProd],
+    ['SESSION_SECRET',         'sessions will use an insecure fallback — REQUIRED for staging/production', isProd],
+    ['DB_HOST',                'live schema disabled, falling back to CLAUDE.md', false],
+    ['DB_USER',                'live schema disabled, falling back to CLAUDE.md', false],
+    ['DB_PASSWORD',            'live schema disabled, falling back to CLAUDE.md', false],
+    ['DB_NAME',                'live schema disabled, falling back to CLAUDE.md', false],
+    ['ALLOWED_EMBED_DOMAINS',  'iframe embedding denied — set to allow Projectworks shell', false],
+  ];
+  for (const [key, note, critical] of checks) {
+    if (!process.env[key]) {
+      const level = critical ? 'CRITICAL' : 'WARNING';
+      console.warn(`[startup] ${level}: ${key} is not set — ${note}`);
+    }
+  }
+
+  // Specific production/staging gate: SESSION_SECRET must be set
+  if (isProd && !process.env.SESSION_SECRET) {
+    console.error('[startup] FATAL: SESSION_SECRET is required in production. Set it to a random 32+ character string.');
+    console.error('[startup] Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+  }
+}
+
 const { readClaudeMd, buildLegacySystemPrompt } = require('./server/lib/claudeMd');
 const { getAnthropicModelMain, getAnthropicModelLight } = require('./server/lib/models');
 const { truncateMessages } = require('./server/lib/contextBuilder');
@@ -58,24 +94,30 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 // See schemaFetcher.js for the full upgrade path description.
 const { fetchLiveSchema } = require('./schemaFetcher');
 const { TENANT_CONFIG, buildTenantContextBlock } = require('./server/lib/tenant/moonLandingData');
+const { extractTenantContext, friendlyTenantError } = require('./server/lib/tenant/tenantContextVerifier');
 
 // Pre-build once at startup — same tenant context injected into every request.
 // Swap TENANT_CONFIG for a registry lookup when multi-tenant is wired up.
 const _tenantContextBlock = buildTenantContextBlock(TENANT_CONFIG);
 
 // ─────────────────────────────────────────────────────────
-// PROJECTWORKS IFRAME INTEGRATION
+// PROJECTWORKS IFRAME INTEGRATION + TENANT CONTEXT SECURITY
 //
-// This is the integration point for embedding PW Report Builder
+// This is the integration point for embedding the Projectworks Assistant
 // inside the Projectworks product shell as an iframe widget.
 //
-// When embedding is ready, this will grow to include:
-//   - Signed JWT URL verification (so only authorised PW tenants can load it)
-//   - Org-scoped database access driven by the orgID below
+// MODES:
+// 1. INTERNAL SINGLE-TENANT (REQUIRE_SIGNED_ORG_ID unset or '0')
+//    - Raw orgID from query string is accepted for demo/internal use
+//    - Safe for internal staging where all users are trusted
+//    - NOT safe for multi-tenant or public use
 //
-// Reference: Metabase uses a signed-JWT iframe embedding pattern for exactly
-// this use case. See metabase.com/docs/latest/embedding/signed-embedding
-// for the approach to discuss with Rob when that conversation happens.
+// 2. SIGNED TENANT (REQUIRE_SIGNED_ORG_ID='1')
+//    - Requires a signed JWT token (pw_org_token query param)
+//    - Token must be signed with SIGNED_ORG_CONTEXT_SECRET
+//    - Prevents tenant impersonation in iframe embedding
+//
+// See server/lib/tenant/tenantContextVerifier.js for implementation details.
 // ─────────────────────────────────────────────────────────
 
 // Comma-separated list of domains allowed to embed this app in an iframe.
@@ -141,6 +183,10 @@ function isPublicAuthRoute(req) {
   if (p === '/auth/login' && m === 'POST') return true;
   if (p === '/auth/signup' && m === 'POST') return true;
   if (p === '/logout' && m === 'GET') return true;
+  if (p === '/auth/forgot-password' && m === 'GET') return true;
+  if (p === '/auth/forgot-password' && m === 'POST') return true;
+  if (p === '/auth/reset-password' && m === 'GET') return true;
+  if (p === '/auth/reset-password' && m === 'POST') return true;
   return false;
 }
 
@@ -180,56 +226,59 @@ app.get('/login.css', (req, res) => {
 app.post('/auth/login', authHandlers.handlePostLogin);
 app.post('/auth/signup', authHandlers.handlePostSignup);
 app.get('/logout', authHandlers.handleGetLogout);
+app.get('/auth/forgot-password', authHandlers.handleGetForgotPassword);
+app.post('/auth/forgot-password', authHandlers.handlePostForgotPassword);
+app.get('/auth/reset-password', authHandlers.handleGetResetPassword);
+app.post('/auth/reset-password', authHandlers.handlePostResetPassword);
 
 /* ── orgID context (iframe embedding) ──────────────── */
 // Projectworks passes ?orgID=<id> when embedding this tool in an iframe.
 // We capture it here and store it in a short-lived cookie so downstream
 // request handlers can read it without re-parsing the URL.
 //
-// TRUST MODEL
-// ─ A bare orgID in the query string is UNAUTHENTICATED — any page that can
-//   load this app in an iframe can claim any tenant. Production must require
-//   a signed token (Metabase-style JWT) that proves Projectworks minted it.
+// TRUST MODEL — see server/lib/tenant/tenantContextVerifier.js for details
 //
-// REQUIRE_SIGNED_ORG_ID=1 flips the safe mode on: unsigned orgID values are
-// rejected with 403. Default (off) preserves today's demo behaviour while the
-// signature scheme is wired up — do NOT leave it off in a real pilot.
+// INTERNAL SINGLE-TENANT MODE (default):
+//   REQUIRE_SIGNED_ORG_ID unset or '0' — raw orgID accepted (safe for internal staging)
 //
-// When flipping on, the iframe must supply a signed token (placeholder: orgSig
-// query param or Authorization header) — verifyOrgSignature below is the seam
-// where the JWT verification lands.
+// SIGNED TENANT MODE (multi-tenant/production):
+//   REQUIRE_SIGNED_ORG_ID=1 + SIGNED_ORG_CONTEXT_SECRET set
+//   Requires pw_org_token query param with valid signed JWT
 
 const REQUIRE_SIGNED_ORG_ID = process.env.REQUIRE_SIGNED_ORG_ID === '1';
+const SIGNED_ORG_CONTEXT_SECRET = process.env.SIGNED_ORG_CONTEXT_SECRET || '';
 
-// Placeholder verifier. Returns true only when the orgID can be cryptographically
-// attributed to Projectworks. Until signed JWTs are wired, this always returns
-// false — any unsigned orgID is rejected when REQUIRE_SIGNED_ORG_ID is on.
-function verifyOrgSignature(_orgID, _signature) {
-  // TODO: implement signed-JWT verification against a Projectworks-issued
-  // shared secret / public key. Expected claims: { pw_org_id, exp, aud }.
-  return false;
+if (REQUIRE_SIGNED_ORG_ID && !SIGNED_ORG_CONTEXT_SECRET) {
+  console.warn('[startup] WARNING: REQUIRE_SIGNED_ORG_ID=1 but SIGNED_ORG_CONTEXT_SECRET is not set — all tenant context requests will fail');
 }
 
 app.use((req, res, next) => {
-  const orgID = req.query.orgID;
-  if (!orgID) return next();
+  // Skip if no tenant context params present
+  if (!req.query.orgID && !req.query.pw_org_token) return next();
 
-  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(orgID)) {
-    console.warn(`[org-context] rejected malformed orgID`);
+  const result = extractTenantContext(req, {
+    requireSigned: REQUIRE_SIGNED_ORG_ID,
+    secret: SIGNED_ORG_CONTEXT_SECRET,
+  });
+
+  // If signed mode required but verification failed, return 403
+  if (REQUIRE_SIGNED_ORG_ID && result.error) {
+    console.warn(`[org-context] REJECTED: ${result.error}`);
+    return res.status(403).json({
+      error: friendlyTenantError(result.error),
+    });
+  }
+
+  // Skip if no valid orgID extracted
+  if (!result.orgID) {
+    if (result.error) {
+      console.warn(`[org-context] skipped due to error: ${result.error}`);
+    }
     return next();
   }
 
-  if (REQUIRE_SIGNED_ORG_ID) {
-    const orgSig = typeof req.query.orgSig === 'string' ? req.query.orgSig : null;
-    if (!verifyOrgSignature(orgID, orgSig)) {
-      console.warn(`[org-context] REJECTED unsigned orgID=${orgID} (REQUIRE_SIGNED_ORG_ID=1)`);
-      return res.status(403).json({
-        error: 'Unsigned tenant context rejected. A signed Projectworks token is required to embed this tool.',
-      });
-    }
-  }
-
-  res.cookie('pw_org_id', orgID, {
+  // Store orgID in cookie for downstream handlers
+  res.cookie('pw_org_id', result.orgID, {
     httpOnly: true,
     path: '/',
     // SameSite=None + Secure required for cross-site iframe cookies in production.
@@ -238,7 +287,9 @@ app.use((req, res, next) => {
       ? { sameSite: 'none', secure: true }
       : { sameSite: 'lax' }),
   });
-  console.log(`[org-context] orgID=${orgID} — will be used for org-scoped data access`);
+
+  const modeLabel = result.verified ? 'verified' : 'unsigned';
+  console.log(`[org-context] orgID=${result.orgID} (${modeLabel}) — will be used for org-scoped data access`);
   next();
 });
 
@@ -275,6 +326,96 @@ app.get('/api/schema-version', (req, res) => {
 app.get('/api/auth/me', authHandlers.handleGetMe);
 app.patch('/api/preferences', authHandlers.handlePatchPreferences);
 
+/* ── GET /api/memory · PATCH /api/memory · DELETE /api/memory ─ */
+// Per-user memory: facts the AI should remember across conversations.
+// Stored in the user's record in the persistence layer, never from client input.
+
+app.get('/api/memory', async (req, res) => {
+  if (!req.authUser) return res.status(401).json({ error: "We couldn't verify your session. Please sign in again." });
+  const raw = await userRepo.getMemory(req.authUser.id);
+  const items = raw ? raw.split('\n').map(l => l.trim()).filter(Boolean) : [];
+  return res.json({ items });
+});
+
+app.patch('/api/memory', async (req, res) => {
+  if (!req.authUser) return res.status(401).json({ error: "We couldn't verify your session. Please sign in again." });
+  const { items } = req.body;
+  if (!Array.isArray(items)) return res.status(400).json({ error: 'Invalid request.' });
+  const text = items.map(i => String(i).trim()).filter(Boolean).join('\n');
+  await userRepo.setMemory(req.authUser.id, text);
+  return res.json({ ok: true });
+});
+
+app.delete('/api/memory', async (req, res) => {
+  if (!req.authUser) return res.status(401).json({ error: "We couldn't verify your session. Please sign in again." });
+  await userRepo.setMemory(req.authUser.id, '');
+  return res.json({ ok: true });
+});
+
+/* ── POST /api/memory/extract ────────────────────────── */
+// Extracts memorable facts from a conversation turn and appends them to memory.
+// Called client-side after each AI response that may contain user context.
+
+app.post('/api/memory/extract', async (req, res) => {
+  if (!req.authUser) return res.status(401).json({ error: "We couldn't verify your session. Please sign in again." });
+  if (!ANTHROPIC_API_KEY || ANTHROPIC_API_KEY === 'your-key-here') {
+    return res.json({ extracted: [] });
+  }
+
+  const { userMessage, assistantMessage } = req.body;
+  if (!userMessage || !assistantMessage) return res.json({ extracted: [] });
+
+  const existingMemory = await userRepo.getMemory(req.authUser.id);
+
+  let upstream;
+  try {
+    upstream = await anthropicMessagesWithRetry(
+      {
+        model: getAnthropicModelLight(),
+        max_tokens: 256,
+        temperature: 0,
+        messages: [{
+          role: 'user',
+          content: `You are a memory extractor. Given a conversation turn, extract any facts about the USER that would be worth remembering for future conversations — their role, team, reporting preferences, things they've told you about their organisation.
+
+EXISTING MEMORY (do not duplicate these):
+${existingMemory || '(none)'}
+
+USER MESSAGE:
+${String(userMessage).slice(0, 1000)}
+
+ASSISTANT RESPONSE (first 400 chars):
+${String(assistantMessage).slice(0, 400)}
+
+Extract 0–3 short facts worth remembering as bullet points starting with "- ". Only include facts the user explicitly stated about themselves or their org. If there is nothing worth remembering, reply with exactly: NONE`,
+        }],
+      },
+      ANTHROPIC_API_KEY,
+      { maxRetries: 1 },
+    );
+  } catch {
+    return res.json({ extracted: [] });
+  }
+
+  if (!upstream.ok) return res.json({ extracted: [] });
+
+  const data = await upstream.json().catch(() => ({}));
+  const text = data.content?.[0]?.text?.trim() || '';
+  if (!text || text === 'NONE') return res.json({ extracted: [] });
+
+  const newFacts = text.split('\n')
+    .map(l => l.trim().replace(/^[-•*]\s*/, ''))
+    .filter(l => l.length > 5 && l.length < 200);
+
+  if (!newFacts.length) return res.json({ extracted: [] });
+
+  const updated = existingMemory
+    ? existingMemory + '\n' + newFacts.join('\n')
+    : newFacts.join('\n');
+  await userRepo.setMemory(req.authUser.id, updated);
+  return res.json({ extracted: newFacts });
+});
+
 /* ── POST /api/chat ─────────────────────────────────── */
 // Proxies the request to Anthropic and pipes the SSE stream straight back.
 // The API key never touches the browser.
@@ -284,11 +425,11 @@ app.post('/api/chat', async (req, res) => {
   const advisorMode = !!advisorModeBody;
 
   if (!ANTHROPIC_API_KEY || ANTHROPIC_API_KEY === 'your-key-here') {
-    return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not set in .env' });
+    return res.status(500).json({ error: "We've hit a snag — the AI service isn't configured yet. Please contact your administrator." });
   }
 
   if (!Array.isArray(messages) || !messages.length) {
-    return res.status(400).json({ error: 'messages array required' });
+    return res.status(400).json({ error: 'Invalid request — please refresh the page and try again.' });
   }
 
   const clientIp = req.ip || req.socket?.remoteAddress || 'global';
@@ -373,16 +514,12 @@ app.post('/api/chat', async (req, res) => {
       { maxRetries: 3 },
     );
   } catch {
-    return res.status(502).json({ error: 'Could not reach Anthropic API.' });
+    return res.status(502).json({ error: 'Something went wrong on our end. Please try again in a moment.' });
   }
 
   if (!upstream.ok) {
-    let msg = `Anthropic API error ${upstream.status}`;
-    try {
-      const err = await upstream.json();
-      msg = err.error?.message || msg;
-    } catch {}
-    return res.status(upstream.status).json({ error: msg });
+    console.error(`[api/chat] Anthropic upstream error: ${upstream.status}`);
+    return res.status(upstream.status < 500 ? 502 : 502).json({ error: 'Something went wrong on our end. Please try again in a moment.' });
   }
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -412,7 +549,7 @@ app.post('/api/title', async (req, res) => {
   const { message } = req.body;
 
   if (!ANTHROPIC_API_KEY || ANTHROPIC_API_KEY === 'your-key-here') {
-    return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not set in .env' });
+    return res.status(500).json({ error: "We've hit a snag — the AI service isn't configured yet. Please contact your administrator." });
   }
 
   const clientIp = req.ip || req.socket?.remoteAddress || 'global';

@@ -7,21 +7,20 @@
 // callbacks: { onChunk(text), onDone({ text, sql, raw }), onError(message) }
 
 async function sendToAI(messages, callbacks) {
-  const { onChunk, onDone, onError, advisorMode } = callbacks;
+  const { onChunk, onDone, onError, onAborted, advisorMode, signal } = callbacks;
   let response;
-  // Read user memory from localStorage and attach to request.
-  // Server injects it into the system prompt (placeholder until server-side persistence).
-  const userMemory = localStorage.getItem('pw_user_memory') || '';
 
   try {
     response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ messages, advisorMode: !!advisorMode, ...(userMemory ? { userMemory } : {}) }),
+      signal: signal || null,
+      body: JSON.stringify({ messages, advisorMode: !!advisorMode }),
     });
-  } catch {
-    onError('Network error — is the server running? Try: npm start');
+  } catch (err) {
+    if (err && err.name === 'AbortError') { onAborted?.(); return; }
+    onError('Network error — please check your connection and try again.');
     return;
   }
 
@@ -62,7 +61,8 @@ async function sendToAI(messages, callbacks) {
         }
       }
     }
-  } catch {
+  } catch (err) {
+    if (err && err.name === 'AbortError') { onAborted?.(); return; }
     onError('Stream interrupted — please try again.');
     return;
   }

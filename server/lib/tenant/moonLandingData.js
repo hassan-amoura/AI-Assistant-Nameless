@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Moon Landing Data — fictional PSA demo tenant for Projectworks.
+ * Projectworks — internal tenant config for PW Report Builder.
  *
  * SWAP GUIDE: Replace this module with a real tenant config to go live.
  * The exported TENANT_CONFIG shape is the canonical schema — real data
@@ -12,78 +12,26 @@
 
 const TENANT_CONFIG = {
   org: {
-    name: 'Moon Landing Data',
-    orgId: 'moon-landing-data',
+    name: 'Projectworks',
+    orgId: 'projectworks',
     industry: 'Management & Technology Consulting',
-    currency: 'AUD',
+    currency: 'NZD',
     fiscalYearStart: 'July',
     headcount: 50,
+    // All currencies active in this org's Projectworks instance.
+    // baseCurrency is used for consolidated reporting.
+    // activeCurrencies lists all project-level currencies in use.
+    // Projectworks uses fixer.io for live FX rates — conversions in queries
+    // should note which rate source and date was used.
+    baseCurrency: 'NZD',
+    activeCurrencies: ['NZD', 'AUD', 'USD'],
   },
 
-  teams: [
-    { name: 'Delivery',            headcount: 12, lead: 'Leonardo DiCaprio',  billable: true,  utilisationTarget: 0.80, currentUtilisation: 0.64 },
-    { name: 'Data & Analytics',    headcount: 10, lead: 'Scarlett Johansson', billable: true,  utilisationTarget: 0.80, currentUtilisation: 0.97 },
-    { name: 'Strategy & Advisory', headcount:  7, lead: 'Brad Pitt',          billable: true,  utilisationTarget: 0.75, currentUtilisation: 0.71 },
-    { name: 'Sales',               headcount:  6, lead: 'Hugh Jackman',       billable: false, utilisationTarget: null, currentUtilisation: null },
-    { name: 'Operations',          headcount:  7, lead: 'Tina Fey',           billable: false, utilisationTarget: null, currentUtilisation: null },
-    { name: 'Leadership',          headcount:  5, lead: 'Oprah Winfrey',      billable: false, utilisationTarget: null, currentUtilisation: null },
-  ],
+  // TODO: populate with real org data before internal rollout
+  teams: [],
 
-  people: [
-    // Leadership
-    { name: 'Oprah Winfrey',       team: 'Leadership',          role: 'Managing Director',        billable: false },
-    { name: 'George Clooney',      team: 'Leadership',          role: 'Chief Operating Officer',  billable: false },
-    { name: 'Cate Blanchett',      team: 'Leadership',          role: 'Chief Financial Officer',  billable: false },
-    { name: 'Denzel Washington',   team: 'Leadership',          role: 'Head of Strategy',         billable: false },
-    { name: 'Michelle Pfeiffer',   team: 'Leadership',          role: 'Head of People & Culture', billable: false },
-    // Strategy & Advisory
-    { name: 'Brad Pitt',           team: 'Strategy & Advisory', role: 'Principal Advisor',        billable: true,  utilisationThisMonth: 0.68 },
-    { name: 'Meryl Streep',        team: 'Strategy & Advisory', role: 'Senior Advisor',           billable: true,  utilisationThisMonth: 0.74 },
-    { name: 'Anthony Hopkins',     team: 'Strategy & Advisory', role: 'Principal Advisor',        billable: true,  utilisationThisMonth: 0.70 },
-    { name: 'Jodie Foster',        team: 'Strategy & Advisory', role: 'Senior Consultant',        billable: true,  utilisationThisMonth: 0.72 },
-    { name: 'Matt Damon',          team: 'Strategy & Advisory', role: 'Consultant',               billable: true,  utilisationThisMonth: 0.71 },
-    { name: 'Charlize Theron',     team: 'Strategy & Advisory', role: 'Senior Consultant',        billable: true,  utilisationThisMonth: 0.69 },
-    { name: 'Tom Hanks',           team: 'Strategy & Advisory', role: 'Principal Advisor',        billable: true,  utilisationThisMonth: 0.73 },
-    // Delivery
-    { name: 'Leonardo DiCaprio',   team: 'Delivery',            role: 'Delivery Lead',            billable: true,  utilisationThisMonth: 0.52, onBench: true },
-    { name: 'Natalie Portman',     team: 'Delivery',            role: 'Senior Consultant',        billable: true,  utilisationThisMonth: 0.80 },
-    { name: 'Ryan Gosling',        team: 'Delivery',            role: 'Senior Consultant',        billable: true,  utilisationThisMonth: 0.48, onBench: true },
-    { name: 'Emma Stone',          team: 'Delivery',            role: 'Consultant',               billable: true,  utilisationThisMonth: 0.85 },
-    { name: 'Benedict Cumberbatch',team: 'Delivery',            role: 'Principal Consultant',     billable: true,  utilisationThisMonth: 0.88 },
-    { name: 'Viola Davis',         team: 'Delivery',            role: 'Senior Consultant',        billable: true,  utilisationThisMonth: 0.78 },
-    { name: 'Chris Evans',         team: 'Delivery',            role: 'Consultant',               billable: true,  utilisationThisMonth: 0.60 },
-    { name: 'Margot Robbie',       team: 'Delivery',            role: 'Consultant',               billable: true,  utilisationThisMonth: 0.75 },
-    { name: 'Idris Elba',          team: 'Delivery',            role: 'Principal Consultant',     billable: true,  utilisationThisMonth: 0.82 },
-    { name: 'Florence Pugh',       team: 'Delivery',            role: 'Junior Consultant',        billable: true,  utilisationThisMonth: 0.38, onBench: true },
-    { name: 'Oscar Isaac',         team: 'Delivery',            role: 'Consultant',               billable: true,  utilisationThisMonth: 0.72 },
-    { name: "Lupita Nyong'o",      team: 'Delivery',            role: 'Senior Consultant',        billable: true,  utilisationThisMonth: 0.77 },
-    // Data & Analytics
-    { name: 'Scarlett Johansson',  team: 'Data & Analytics',    role: 'Data Lead',                billable: true,  utilisationThisMonth: 1.08, overCapacity: true },
-    { name: 'Mark Ruffalo',        team: 'Data & Analytics',    role: 'Senior Data Engineer',     billable: true,  utilisationThisMonth: 0.94 },
-    { name: 'Zoe Saldana',         team: 'Data & Analytics',    role: 'Data Analyst',             billable: true,  utilisationThisMonth: 0.88 },
-    { name: 'Pedro Pascal',        team: 'Data & Analytics',    role: 'Senior Analyst',           billable: true,  utilisationThisMonth: 1.04, overCapacity: true },
-    { name: 'Anya Taylor-Joy',     team: 'Data & Analytics',    role: 'Data Engineer',            billable: true,  utilisationThisMonth: 1.12, overCapacity: true },
-    { name: 'John Boyega',         team: 'Data & Analytics',    role: 'Analyst',                  billable: true,  utilisationThisMonth: 0.91 },
-    { name: 'Tessa Thompson',      team: 'Data & Analytics',    role: 'Senior Data Engineer',     billable: true,  utilisationThisMonth: 0.96 },
-    { name: 'Michael B. Jordan',   team: 'Data & Analytics',    role: 'Data Analyst',             billable: true,  utilisationThisMonth: 0.89 },
-    { name: 'Brie Larson',         team: 'Data & Analytics',    role: 'Analyst',                  billable: true,  utilisationThisMonth: 0.85 },
-    { name: 'Chris Hemsworth',     team: 'Data & Analytics',    role: 'Principal Data Engineer',  billable: true,  utilisationThisMonth: 0.98 },
-    // Sales
-    { name: 'Hugh Jackman',        team: 'Sales',               role: 'Head of Sales',            billable: false },
-    { name: 'Nicole Kidman',       team: 'Sales',               role: 'Senior Account Manager',   billable: false },
-    { name: 'Russell Crowe',       team: 'Sales',               role: 'Account Manager',          billable: false },
-    { name: 'Jennifer Aniston',    team: 'Sales',               role: 'Senior Account Manager',   billable: false },
-    { name: 'Jon Hamm',            team: 'Sales',               role: 'Account Manager',          billable: false },
-    { name: 'Amy Adams',           team: 'Sales',               role: 'Senior Account Manager',   billable: false },
-    // Operations
-    { name: 'Tina Fey',            team: 'Operations',          role: 'Operations Manager',       billable: false },
-    { name: 'Amy Poehler',         team: 'Operations',          role: 'Finance Analyst',          billable: false },
-    { name: 'Seth Rogen',          team: 'Operations',          role: 'Resource Manager',         billable: false },
-    { name: 'Mindy Kaling',        team: 'Operations',          role: 'Project Coordinator',      billable: false },
-    { name: 'Aziz Ansari',         team: 'Operations',          role: 'Finance Analyst',          billable: false },
-    { name: 'Donald Glover',       team: 'Operations',          role: 'Business Analyst',         billable: false },
-    { name: 'Kristen Wiig',        team: 'Operations',          role: 'Office Manager',           billable: false },
-  ],
+  // TODO: populate with real org data before internal rollout
+  people: [],
 
   projects: [
     {
@@ -308,11 +256,15 @@ function buildTenantContextBlock(tenant) {
     .map(([team, names]) => `  ${team}: ${names.join(', ')}`)
     .join('\n');
 
+  const currencyLine = org.activeCurrencies && org.activeCurrencies.length > 1
+    ? `Base: ${org.baseCurrency || org.currency} | Active currencies: ${org.activeCurrencies.join(', ')} (rates via fixer.io)`
+    : `Currency: ${org.baseCurrency || org.currency}`;
+
   return `
 ---
 ## TENANT CONTEXT — ${org.name}
 
-Org: ${org.name} | ${org.industry} | ~${org.headcount} staff | ${org.currency}
+Org: ${org.name} | ${org.industry} | ~${org.headcount} staff | ${currencyLine}
 Snapshot: ${fin.asOf} | Revenue YTD: ${kAUD(fin.revenueYTD)} of ${kAUD(fin.revenueTarget)} target | Margin: ${pct(fin.grossMarginYTD)} vs ${pct(fin.grossMarginTarget)} target
 WIP uninvoiced: ${kAUD(fin.totalWIPUnInvoiced)} | Overdue AR: ${kAUD(fin.totalOverdueAR)}
 

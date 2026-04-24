@@ -37,9 +37,49 @@ function createUserRepository(store) {
       return m;
     },
 
+    async setMemory(userId, text) {
+      if (!userId) return;
+      await store.mutate(doc => {
+        const user = doc.users.find(u => u.id === userId);
+        if (user) user.memory = typeof text === 'string' ? text.slice(0, 8000) : '';
+      });
+    },
+
     /**
      * @returns {Promise<{ id: string, email: string, passwordHash: string, createdAt: string }>}
      */
+    async setResetToken(userId, token, expiresAt) {
+      await store.mutate(doc => {
+        const user = doc.users.find(u => u.id === userId);
+        if (user) {
+          user.resetToken = token;
+          user.resetTokenExpiresAt = expiresAt;
+        }
+      });
+    },
+
+    async findByResetToken(token) {
+      const doc = store.readSnapshot();
+      return doc.users.find(u => u.resetToken === token) || null;
+    },
+
+    async clearResetToken(userId) {
+      await store.mutate(doc => {
+        const user = doc.users.find(u => u.id === userId);
+        if (user) {
+          user.resetToken = null;
+          user.resetTokenExpiresAt = null;
+        }
+      });
+    },
+
+    async updatePasswordHash(userId, newHash) {
+      await store.mutate(doc => {
+        const user = doc.users.find(u => u.id === userId);
+        if (user) user.passwordHash = newHash;
+      });
+    },
+
     async createUser(email, passwordHash) {
       const n = normalizeEmail(email);
       const id = crypto.randomUUID();

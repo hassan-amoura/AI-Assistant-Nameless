@@ -16,6 +16,10 @@ CREATE TABLE IF NOT EXISTS users (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Password reset tokens (added post-phase-1; idempotent)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token             TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires_at  TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS sessions (
   token       TEXT        PRIMARY KEY,
   user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,

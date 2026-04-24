@@ -58,6 +58,41 @@ function createPgUserRepository(pool) {
       return m;
     },
 
+    async setMemory(userId, text) {
+      if (!userId) return;
+      const safe = typeof text === 'string' ? text.slice(0, 8000) : '';
+      await pool.query('UPDATE users SET memory = $1 WHERE id = $2', [safe, userId]);
+    },
+
+    async setResetToken(userId, token, expiresAt) {
+      await pool.query(
+        'UPDATE users SET reset_token = $1, reset_token_expires_at = $2 WHERE id = $3',
+        [token, expiresAt, userId],
+      );
+    },
+
+    async findByResetToken(token) {
+      const { rows } = await pool.query(
+        'SELECT id, email, password_hash, memory, created_at FROM users WHERE reset_token = $1',
+        [token],
+      );
+      return rowToUser(rows[0]);
+    },
+
+    async clearResetToken(userId) {
+      await pool.query(
+        'UPDATE users SET reset_token = NULL, reset_token_expires_at = NULL WHERE id = $1',
+        [userId],
+      );
+    },
+
+    async updatePasswordHash(userId, newHash) {
+      await pool.query(
+        'UPDATE users SET password_hash = $1 WHERE id = $2',
+        [newHash, userId],
+      );
+    },
+
     async createUser(email, passwordHash) {
       const n = normalizeEmail(email);
       const id = crypto.randomUUID();

@@ -1,5 +1,6 @@
 .env
 node_modules/
+playbook/
 .DS_Store
 *.zip
 

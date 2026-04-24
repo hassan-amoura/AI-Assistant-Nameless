@@ -31,6 +31,34 @@ AI-powered T-SQL report builder for Projectworks data in Metabase. Describe what
 - Conversation history is maintained in memory in the browser and sent with each request so the model has full context.
 - When the AI response contains a SQL block, it automatically appears in the right panel with syntax highlighting and a copy button.
 
+## Azure Deployment
+
+Deploy to Azure App Service (Node.js on Linux or Windows with IISNode). Set the following as **Application Settings** in the Azure portal — never commit real values to this repo.
+
+**Required**
+| Variable | Description |
+|---|---|
+| `ANTHROPIC_API_KEY` | Anthropic API key — the app will not start AI chat without this |
+| `SESSION_SECRET` | Random string used to sign session cookies |
+
+**Database** (enables live schema introspection)
+| Variable | Description |
+|---|---|
+| `DB_HOST` | SQL Server hostname |
+| `DB_PORT` | Port (default `1433`) |
+| `DB_USER` | SQL Server username |
+| `DB_PASSWORD` | SQL Server password |
+| `DB_NAME` | Database name |
+| `DB_TRUST_CERT` | Set to `true` for self-signed certs (dev/staging only) |
+
+**Embedding** (required when hosting inside the Projectworks product shell)
+| Variable | Description |
+|---|---|
+| `ALLOWED_EMBED_DOMAINS` | Comma-separated domains allowed to iframe this app (e.g. `projectworks.com,projectworks.io`) |
+| `REQUIRE_SIGNED_ORG_ID` | Set to `1` to reject unsigned tenant context — **must be on in production** |
+
+The `.azure/` directory contains `web.config` (IISNode routing) and `deploy.sh` (Kudu deployment script).
+
 ## Files
 
 | File | Purpose |
