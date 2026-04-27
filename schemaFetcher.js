@@ -5,8 +5,8 @@
 //
 // This is the single most important upgrade path for ai-assistant-nameless.
 //
-// Right now the schema in CLAUDE.md is maintained by hand. Every time a
-// reporting view is added, renamed, or gets a new column, CLAUDE.md needs
+// Right now the schema in AGENTS.md is maintained by hand. Every time a
+// reporting view is added, renamed, or gets a new column, AGENTS.md needs
 // a manual edit — and if that edit is missed the AI silently works from
 // stale information and may generate broken queries.
 //
@@ -16,11 +16,11 @@
 // before every /api/chat request. The result:
 //
 //   - Zero schema drift between the reporting database and the AI
-//   - No manual CLAUDE.md edits required for schema changes
+//   - No manual AGENTS.md edits required for schema changes
 //   - The app self-maintains as the Projectworks data model evolves
 //
 // Until DB_HOST is set this module returns null and server.js falls back
-// to the static schema in CLAUDE.md silently.
+// to the static schema in AGENTS.md silently.
 // ─────────────────────────────────────────────────────────
 
 // Simple in-memory cache — avoids a DB round-trip on every chat message.
@@ -30,7 +30,7 @@ let _cacheExpiry  = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 async function fetchLiveSchema() {
-  // Fast-path: no DB configured — caller falls back to CLAUDE.md
+  // Fast-path: no DB configured — caller falls back to AGENTS.md
   if (!process.env.DB_HOST) return null;
 
   // Return cached result if still fresh
@@ -66,7 +66,7 @@ async function fetchLiveSchema() {
 
     // Introspect every table and column in the reporting schema.
     // ORDINAL_POSITION preserves the column order defined in the view/table
-    // so the output matches the hand-written schema in CLAUDE.md.
+    // so the output matches the hand-written schema in AGENTS.md.
     const result = await pool.request().query(`
       SELECT
           t.TABLE_NAME,
@@ -93,7 +93,7 @@ async function fetchLiveSchema() {
       tables.get(row.TABLE_NAME).push(row.COLUMN_NAME);
     }
 
-    // Build a schema description string that matches the CLAUDE.md format
+    // Build a schema description string that matches the AGENTS.md format
     // so the AI receives exactly the same structure it was trained on
     const fetchedAt = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
     let schema = `## PROJECTWORKS REPORTING SCHEMA (live — fetched ${fetchedAt})\n\n`;
@@ -107,7 +107,7 @@ async function fetchLiveSchema() {
     return schema;
 
   } catch (err) {
-    // Log but don't crash — server.js will fall back to CLAUDE.md
+    // Log but don't crash — server.js will fall back to AGENTS.md
     console.error(`[schema] Live schema fetch failed: ${err.message}`);
     return null;
   } finally {

@@ -14,12 +14,12 @@
 //   ✓ Email + password auth, cookie sessions, self sign-up (internal + pilot allowlist)
 //   ✓ iFrame embedding with CSP frame-ancestors allowlist
 //   ✓ orgID context capture for multi-tenant iFrame embedding
-//   ✓ Schema version tracking via CLAUDE.md metadata
+//   ✓ Schema version tracking via AGENTS.md metadata
 //   ✓ Live schema fetcher scaffold (schemaFetcher.js) — awaiting DB creds
 //
 // REQUIRES DATABASE CONNECTION  (set DB_HOST … DB_NAME in .env)
 //   → Live schema introspection via schemaFetcher.js
-//     (currently falls back to the static schema in CLAUDE.md)
+//     (currently falls back to the static schema in AGENTS.md)
 //   → Actual SQL execution and live result display in the UI
 //   → CSV export of real query results (currently exports query text only)
 //   → Org-scoped data access driven by the pw_org_id cookie
@@ -56,10 +56,10 @@ const path = require('path');
     ['ANTHROPIC_API_KEY',      'AI chat disabled, API calls will fail', true],
     ['DATABASE_URL',           'falling back to JSON file store — set for staging/production', isProd],
     ['SESSION_SECRET',         'sessions will use an insecure fallback — REQUIRED for staging/production', isProd],
-    ['DB_HOST',                'live schema disabled, falling back to CLAUDE.md', false],
-    ['DB_USER',                'live schema disabled, falling back to CLAUDE.md', false],
-    ['DB_PASSWORD',            'live schema disabled, falling back to CLAUDE.md', false],
-    ['DB_NAME',                'live schema disabled, falling back to CLAUDE.md', false],
+    ['DB_HOST',                'live schema disabled, falling back to AGENTS.md', false],
+    ['DB_USER',                'live schema disabled, falling back to AGENTS.md', false],
+    ['DB_PASSWORD',            'live schema disabled, falling back to AGENTS.md', false],
+    ['DB_NAME',                'live schema disabled, falling back to AGENTS.md', false],
     ['ALLOWED_EMBED_DOMAINS',  'iframe embedding denied — set to allow Projectworks shell', false],
   ];
   for (const [key, note, critical] of checks) {
@@ -78,11 +78,12 @@ const path = require('path');
 
 const { readClaudeMd, buildLegacySystemPrompt } = require('./server/lib/claudeMd');
 const { getAnthropicModelMain, getAnthropicModelLight } = require('./server/lib/models');
-const { truncateMessages } = require('./server/lib/contextBuilder');
+const { truncateMessages, lastUserText } = require('./server/lib/contextBuilder');
 const { classifyIntent } = require('./server/lib/intake');
 const { buildChatSystemForRequest } = require('./server/lib/buildChatSystem');
 const { anthropicMessagesWithRetry, buildSystemWithCache } = require('./server/lib/anthropicClient');
 const { rateLimitHit } = require('./server/lib/rateLimit');
+const { getWorkspaceKnowledge, addWorkspaceKnowledge } = require('./server/lib/knowledgeStore');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -90,7 +91,7 @@ const PORT = process.env.PORT || 3000;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
 // Live schema fetcher — returns null when DB_HOST is not set, falling back
-// to the static schema embedded in CLAUDE.md.
+// to the static schema embedded in AGENTS.md.
 // See schemaFetcher.js for the full upgrade path description.
 const { fetchLiveSchema } = require('./schemaFetcher');
 const { TENANT_CONFIG, buildTenantContextBlock } = require('./server/lib/tenant/moonLandingData');
@@ -305,7 +306,7 @@ app.get('/api/greeting', (req, res) => {
 });
 
 /* ── GET /api/schema-version ────────────────────────── */
-// Returns the schema version metadata from CLAUDE.md and whether a live
+// Returns the schema version metadata from AGENTS.md and whether a live
 // database is configured. Useful for confirming which schema the AI is using.
 
 app.get('/api/schema-version', (req, res) => {
@@ -586,6 +587,22 @@ app.post('/api/chat', async (req, res) => {
       '\n</user_preferences>\n'
     : '';
 
+  // Workspace knowledge — uses 'default' until multi-tenant is wired up.
+  const workspaceId = 'default';
+  const knowledgeItems = await getWorkspaceKnowledge(workspaceId);
+
+  // Task 5: Detect "remember that X means Y" patterns and capture as knowledge.
+  // Fire-and-forget to avoid blocking the chat response.
+  const userText = lastUserText(truncated);
+  const rememberMatch = userText.match(/(?:remember(?:\s+that)?|for\s+(?:this|our)\s+(?:customer|org(?:anisation)?|workspace),?|always\s+use)\s+[""']?([^""']+?)[""']?\s+(?:means?|is|=|to\s+mean)\s+[""']?([^""'.]+)/i);
+  if (rememberMatch) {
+    const [, term, definition] = rememberMatch;
+    if (term && definition && term.length < 100 && definition.length < 500) {
+      addWorkspaceKnowledge(workspaceId, { term: term.trim(), definition: definition.trim(), source: 'user-capture' })
+        .catch(() => {});
+    }
+  }
+
   if (process.env.DISABLE_AI_INTAKE === '1') {
     const liveSchema = await fetchLiveSchema();
     // Legacy debug path — plain string, no caching.
@@ -597,7 +614,7 @@ app.post('/api/chat', async (req, res) => {
       fetchLiveSchema(),
       classifyIntent(truncated, ANTHROPIC_API_KEY),
     ]);
-    // UI Advisor mode: always conversation layer (no SQL engine route), per CLAUDE.md.
+    // UI Advisor mode: always conversation layer (no SQL engine route), per AGENTS.md.
     const route = advisorMode
       ? 'data_advisor'
       : intake.route === 'data_advisor'
@@ -609,6 +626,7 @@ app.post('/api/chat', async (req, res) => {
       liveSchema,
       messages: truncated,
       tenantContextBlock: _tenantContextBlock,
+      knowledgeItems,
     });
     // Cache breakpoints go on the stable prefix (instructions, schema slice,
     // tenant block). Dynamic tail (mode suffix, template hint, revenue/margin

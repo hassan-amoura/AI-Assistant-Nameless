@@ -492,6 +492,7 @@ const _drag = {
   startY: 0,
   active: false,
   ghost: null,
+  targetId: null,
 };
 let _dragConsumeNextClick = false;
 
@@ -517,10 +518,10 @@ function _onConvMousedown(e) {
 
   const sectionEl = item.closest('[data-section]');
   const sourceSection = sectionEl ? sectionEl.dataset.section : 'recent';
-  if (sourceSection === 'pinned') return;
 
   _drag.id = parseInt(item.dataset.convId, 10);
   _drag.section = sourceSection;
+  _drag.targetId = null;
   _drag.startX = e.clientX;
   _drag.startY = e.clientY;
   _drag.active = false;
@@ -566,11 +567,28 @@ function _createDragGhost(e) {
 }
 
 function _updateDragHighlight(e) {
-  convList.querySelectorAll('.drop-target-active').forEach(el => el.classList.remove('drop-target-active'));
+  convList.querySelectorAll('.drop-target-active, .drop-target-item').forEach(el => {
+    el.classList.remove('drop-target-active', 'drop-target-item');
+  });
   const under = document.elementFromPoint(e.clientX, e.clientY);
   if (!under) return;
   const section = under.closest('[data-section]');
-  if (section && section.dataset.section === 'pinned') section.classList.add('drop-target-active');
+  if (!section) return;
+  const targetSection = section.dataset.section;
+  if (_drag.section === 'recent') {
+    if (targetSection === 'pinned') section.classList.add('drop-target-active');
+  } else if (_drag.section === 'pinned') {
+    if (targetSection === 'pinned') {
+      const item = under.closest('.conv-item[data-conv-id]');
+      if (item && parseInt(item.dataset.convId, 10) !== _drag.id) {
+        item.classList.add('drop-target-item');
+      } else {
+        section.classList.add('drop-target-active');
+      }
+    } else if (targetSection === 'recent') {
+      section.classList.add('drop-target-active');
+    }
+  }
 }
 
 function _onDragEnd(e) {
@@ -583,7 +601,9 @@ function _onDragEnd(e) {
 
   _dragConsumeNextClick = true;
   convList.classList.remove('dragging');
-  convList.querySelectorAll('.drop-target-active').forEach(el => el.classList.remove('drop-target-active'));
+  convList.querySelectorAll('.drop-target-active, .drop-target-item').forEach(el => {
+    el.classList.remove('drop-target-active', 'drop-target-item');
+  });
 
   if (_drag.ghost) { _drag.ghost.remove(); _drag.ghost = null; }
 
@@ -593,13 +613,31 @@ function _onDragEnd(e) {
   const conv = conversations.find(c => c.id === _drag.id);
 
   if (conv && targetSection === 'pinned' && _drag.section === 'recent') {
-    // Recent → Pinned: pin and move to top
+    // Recent → Pinned: pin and move to top of pinned
     conv.pinned = true;
     const idx = conversations.indexOf(conv);
     if (idx > -1) conversations.splice(idx, 1);
     conversations.unshift(conv);
     saveConversations();
     renderSidebar();
+  } else if (conv && targetSection === 'recent' && _drag.section === 'pinned') {
+    // Pinned → Recent: unpin
+    conv.pinned = false;
+    saveConversations();
+    renderSidebar();
+  } else if (conv && targetSection === 'pinned' && _drag.section === 'pinned') {
+    // Pinned → Pinned: reorder within pinned section
+    const targetItem = under && under.closest('.conv-item[data-conv-id]');
+    if (targetItem && parseInt(targetItem.dataset.convId, 10) !== _drag.id) {
+      const targetId = parseInt(targetItem.dataset.convId, 10);
+      const dragIdx = conversations.indexOf(conv);
+      if (dragIdx > -1) conversations.splice(dragIdx, 1);
+      const newTargetIdx = conversations.findIndex(c => c.id === targetId);
+      if (newTargetIdx > -1) conversations.splice(newTargetIdx, 0, conv);
+      else conversations.unshift(conv);
+      saveConversations();
+      renderSidebar();
+    }
   }
 
   _resetDrag();
@@ -612,6 +650,7 @@ function _resetDrag() {
   }
   _drag.id = null;
   _drag.section = null;
+  _drag.targetId = null;
   _drag.active = false;
   if (_drag.ghost) { _drag.ghost.remove(); _drag.ghost = null; }
   convList.classList.remove('dragging');
@@ -1670,6 +1709,7 @@ function returnToChatFromReportDetail() {
 function switchFromReportDetailToLibrary() {
   leaveReportDetailShell();
   appView = 'library';
+  lastViewedReportId = null;
 
   const chatCol = document.getElementById('chat-col');
   if (chatCol) {
@@ -1841,12 +1881,12 @@ function sendMessage() {
   if (isFirst) {
     generateTitleWithAI(text).then(aiTitle => {
       const title = aiTitle || generateTitle(text);
-      if (title && activeId === conv.id) {
+      if (title) {
         conv.title = title;
         if (conv.savedReport) conv.savedReport.title = title;
         renderSidebar();
         saveConversations();
-        if (sqlPanel.classList.contains('open'))
+        if (sqlPanel.classList.contains('open') && activeId === conv.id)
           document.getElementById('sql-panel-name').textContent = title;
       }
     }).catch(() => {
@@ -1999,6 +2039,33 @@ function sendMessage() {
 
 /* ── SQL Panel ──────────────────────────────────────── */
 
+// Delegated hover tooltip for #btn-copy-panel — must use delegation because the
+// button lives inside a dynamically rendered panel (position is 0,0 at init time).
+let _copyPanelHoverTooltip = null;
+document.body.addEventListener('mouseover', (e) => {
+  const btn = e.target.closest('#btn-copy-panel');
+  if (!btn) return;
+  if (_copyPanelHoverTooltip) return;
+  _copyPanelHoverTooltip = document.createElement('div');
+  _copyPanelHoverTooltip.className = 'copy-tooltip-body';
+  _copyPanelHoverTooltip.textContent = btn.getAttribute('data-tooltip') || 'Copy';
+  document.body.appendChild(_copyPanelHoverTooltip);
+  const rect = btn.getBoundingClientRect();
+  const tw = _copyPanelHoverTooltip.offsetWidth;
+  const th = _copyPanelHoverTooltip.offsetHeight;
+  let top = rect.top - th - 6;
+  let left = rect.left + rect.width / 2 - tw / 2;
+  if (top < 4) top = rect.top + 4;
+  if (left < 4) left = 4;
+  if (left + tw > window.innerWidth - 4) left = window.innerWidth - tw - 4;
+  _copyPanelHoverTooltip.style.cssText = `position:fixed;top:${top}px;left:${left}px;z-index:9999;pointer-events:none;`;
+});
+document.body.addEventListener('mouseout', (e) => {
+  const btn = e.target.closest('#btn-copy-panel');
+  if (!btn) return;
+  if (_copyPanelHoverTooltip) { _copyPanelHoverTooltip.remove(); _copyPanelHoverTooltip = null; }
+});
+
 function prepareSQLPanelContent(sql, title, categoryOpt) {
   document.getElementById('sql-panel-name').textContent = title || 'SQL Output';
   sqlOutput.innerHTML = highlightSQL(sql);
@@ -2057,13 +2124,19 @@ function showCopyTooltip(btn, text) {
   const th = tooltip.offsetHeight;
   let top = rect.top - th - 6;
   let left = rect.left + rect.width / 2 - tw / 2;
-  if (top < 4) top = rect.bottom + 6;
+  if (top < 4) top = rect.top + 4;
   if (left < 4) left = 4;
   if (left + tw > window.innerWidth - 4) left = window.innerWidth - tw - 4;
   tooltip.style.cssText = `position:fixed;top:${top}px;left:${left}px;z-index:9999;`;
-  const dismiss = () => { tooltip.remove(); document.removeEventListener('click', dismiss); };
+  const dismiss = () => {
+    tooltip.remove();
+    document.removeEventListener('click', dismiss);
+    document.removeEventListener('keydown', onEsc);
+  };
+  const onEsc = (e) => { if (e.key === 'Escape') dismiss(); };
   setTimeout(() => dismiss(), 2000);
   setTimeout(() => document.addEventListener('click', dismiss, { once: true }), 10);
+  document.addEventListener('keydown', onEsc);
 }
 
 function copySQLPanel() {
@@ -2832,7 +2905,20 @@ async function loadGreeting() {
 
 /* ── Init ────────────────────────────────────────────── */
 
+function initSQLPanelExtras() {
+  const footer = document.querySelector('#sql-panel .results-panel-actions');
+  if (footer && !footer.querySelector('.btn-panel-export-csv')) {
+    const exportBtn = document.createElement('button');
+    exportBtn.type = 'button';
+    exportBtn.className = 'btn-panel-export-csv';
+    exportBtn.onclick = exportCSV;
+    exportBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M7.47 10.78a.75.75 0 001.06 0l3.75-3.75a.75.75 0 00-1.06-1.06L8.75 8.44V1.75a.75.75 0 00-1.5 0v6.69L4.78 5.97a.75.75 0 00-1.06 1.06l3.75 3.75zM3.75 13a.75.75 0 000 1.5h8.5a.75.75 0 000-1.5h-8.5z"/></svg> Export CSV`;
+    footer.appendChild(exportBtn);
+  }
+}
+
 applyTenantShell();
+initSQLPanelExtras();
 // Auth must resolve before loading any user-scoped storage. loadConversations()
 // and initSidebar() read localStorage keys namespaced by pwCurrentUser.id, so
 // they must run after the user is known.

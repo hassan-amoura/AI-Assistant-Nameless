@@ -47,6 +47,18 @@ Use the exact <reasoning>...</reasoning> plus fenced sql format from SQL OUTPUT 
 If you discover mid-reasoning that something critical is still undefined, stop and ask **one** natural question instead of SQL.
 `;
 
+/**
+ * Formats workspace knowledge items into a readable section for the prompt.
+ * Only called when knowledge items exist.
+ * @param {Array<{term: string, definition: string}>} items
+ * @returns {string}
+ */
+function formatKnowledgeBlock(items) {
+  if (!items || !items.length) return '';
+  const lines = items.map(i => `- ${i.term} = ${i.definition}`).join('\n');
+  return `\n## Workspace Knowledge\n${lines}\n`;
+}
+
 function pickSchemaBody(liveSchema, staticSchemaSection) {
   if (liveSchema && liveSchema.trim()) return liveSchema;
   return staticSchemaSection || '';
@@ -61,16 +73,18 @@ function pickSchemaBody(liveSchema, staticSchemaSection) {
  *   templateId: string|null,
  * }}
  */
-function buildChatSystemForRequest({ route, family, liveSchema, messages, tenantContextBlock }) {
+function buildChatSystemForRequest({ route, family, liveSchema, messages, tenantContextBlock, knowledgeItems }) {
   const { instructions, schemaSection } = splitClaudeMd();
   const fullSchema = pickSchemaBody(liveSchema, schemaSection);
   const overview = schemaTableOverview(fullSchema);
   const lastUser = lastUserText(messages);
   const tenantBlock = (tenantContextBlock || '').trim();
+  const knowledgeBlock = formatKnowledgeBlock(knowledgeItems);
 
   if (route === 'data_advisor') {
     const cachedBlocks = [instructions, overview];
     if (tenantBlock) cachedBlocks.push(tenantBlock);
+    if (knowledgeBlock) cachedBlocks.push(knowledgeBlock);
     return {
       cachedBlocks,
       dynamicBlocks: [ADVISOR_MODE_SUFFIX],
@@ -88,6 +102,7 @@ function buildChatSystemForRequest({ route, family, liveSchema, messages, tenant
 
   const cachedBlocks = [instructions, sliced];
   if (tenantBlock) cachedBlocks.push(tenantBlock);
+  if (knowledgeBlock) cachedBlocks.push(knowledgeBlock);
 
   const dynamicBlocks = [];
   if (templateHint) dynamicBlocks.push(templateHint);

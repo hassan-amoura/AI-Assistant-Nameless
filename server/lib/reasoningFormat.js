@@ -4,7 +4,7 @@
  * Normalizes model reasoning for the existing UI (reasoning rows are "Key: value").
  *
  * Future: if the model emits JSON inside <reasoning>, parse and expand to lines here.
- * For now: passthrough — CLAUDE.md already specifies the five reasoning fields.
+ * For now: passthrough — AGENTS.md already specifies the five reasoning fields.
  */
 function normalizeReasoningBlock(text) {
   if (!text || typeof text !== 'string') return text;

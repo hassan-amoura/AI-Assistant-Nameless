@@ -120,7 +120,7 @@
   width: 100%;
   margin-top: 20px;
   padding: 11px 14px;
-  background: #cbdf00;
+  background: #BFFF00;
   border: none;
   border-radius: 8px;
   font-family: inherit;
@@ -132,11 +132,11 @@
 }
 
 .login-btn-primary:hover {
-  background: #d9ef00;
+  background: #d4ff33;
 }
 
 .login-btn-primary:active {
-  background: #bacc00;
+  background: #a6e600;
 }
 
 .login-divider {

@@ -1292,6 +1292,9 @@ kbd {
   opacity: 1;
 }
 
+/* Panel copy button uses a JS-rendered body tooltip to avoid parent overflow clipping */
+#btn-copy-panel::after { display: none !important; }
+
 .copy-tooltip-body {
   background: rgba(0, 0, 0, 0.82);
   color: #fff;
@@ -1699,6 +1702,30 @@ kbd {
 }
 
 .btn-send-metabase:hover { background: #b3f200; }
+
+.btn-panel-export-csv {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 9px 18px;
+  background: #FFFFFF;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+  flex-shrink: 0;
+}
+
+.btn-panel-export-csv:hover {
+  background: var(--pw-background);
+  border-color: var(--border-hover);
+}
 
 /* ── SQL view ───────────────────────────────────────── */
 
@@ -2700,10 +2727,10 @@ kbd {
 .pinned-drop-zone {
   padding: 7px 10px;
   margin: 2px 0 4px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px dashed #DDDDDD;
   border-radius: 6px;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.42);
+  color: #AAAAAA;
   text-align: center;
   transition: border-color 0.15s, background 0.15s, color 0.15s;
   user-select: none;
@@ -2715,18 +2742,18 @@ kbd {
   background: rgba(255, 255, 255, 0.04);
 }
 
-/* Drop zone while dragging */
+/* Drop zone while dragging — green active state */
 .conv-list.dragging .pinned-drop-zone {
-  border-color: rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.64);
+  border-color: #18B96E;
+  background: rgba(24, 185, 110, 0.1);
+  color: #18B96E;
 }
 
-/* Active drop target hover state */
+/* Active drop target — green ring */
 [data-section].drop-target-active {
   border-radius: 6px;
-  background: #253745;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  background: rgba(24, 185, 110, 0.08);
+  box-shadow: inset 0 0 0 1.5px #18B96E;
 }
 
 /* Drag ghost — follows cursor */
@@ -2773,6 +2800,12 @@ body.sidebar-dragging .sidebar * {
 .conv-list.dragging .conv-item:hover,
 .conv-list.dragging .conv-item.active {
   background: transparent;
+}
+
+/* Reorder target — must follow the hover/active override to win the cascade */
+.conv-list.dragging .conv-item.drop-target-item {
+  background: rgba(24, 185, 110, 0.1);
+  box-shadow: inset 0 0 0 1.5px rgba(24, 185, 110, 0.5);
 }
 
 .conv-list.dragging .conv-item.active .conv-title {
@@ -4893,8 +4926,8 @@ html.pw-embedded .conv-list::-webkit-scrollbar-thumb:hover {
 }
 
 html.pw-embedded .pinned-drop-zone {
-  border-color: #DDE2E7;
-  color: #7A8490;
+  border-color: #DDDDDD;
+  color: #AAAAAA;
 }
 
 html.pw-embedded .conv-list.dragging [data-section="pinned"] {
@@ -4902,14 +4935,14 @@ html.pw-embedded .conv-list.dragging [data-section="pinned"] {
 }
 
 html.pw-embedded .conv-list.dragging .pinned-drop-zone {
-  border-color: #D5DCE4;
-  background: #EDF1F5;
-  color: #4A5C6A;
+  border-color: #18B96E;
+  background: #E8F8F1;
+  color: #18B96E;
 }
 
 html.pw-embedded [data-section].drop-target-active {
-  background: #E7ECF2;
-  box-shadow: inset 0 0 0 1px #CCD0CF;
+  background: #E8F8F1;
+  box-shadow: inset 0 0 0 1.5px #18B96E;
 }
 
 html.pw-embedded .drag-ghost {
@@ -4921,6 +4954,12 @@ html.pw-embedded .drag-ghost {
 html.pw-embedded .conv-list.dragging .conv-item:hover,
 html.pw-embedded .conv-list.dragging .conv-item.active {
   background: transparent;
+}
+
+/* Reorder target — follows hover override */
+html.pw-embedded .conv-list.dragging .conv-item.drop-target-item {
+  background: #E8F8F1;
+  box-shadow: inset 0 0 0 1.5px rgba(24, 185, 110, 0.5);
 }
 
 html.pw-embedded .conv-list.dragging .conv-item.active .conv-title {

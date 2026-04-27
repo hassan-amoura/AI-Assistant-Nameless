@@ -4,7 +4,7 @@ const fs   = require('fs');
 const path = require('path');
 
 // server/lib → repo root is two levels up
-const CLAUDE_MD_PATH = path.join(__dirname, '..', '..', 'CLAUDE.md');
+const AGENTS_MD_PATH = path.join(__dirname, '..', '..', 'AGENTS.md');
 
 /** Must match server.js splice point for live schema from schemaFetcher.js */
 const SCHEMA_SECTION_MARKER = '\n## PROJECTWORKS REPORTING SCHEMA';
@@ -13,12 +13,12 @@ let _cachedFull = null;
 
 function readClaudeMd() {
   if (_cachedFull) return _cachedFull;
-  _cachedFull = fs.readFileSync(CLAUDE_MD_PATH, 'utf8');
+  _cachedFull = fs.readFileSync(AGENTS_MD_PATH, 'utf8');
   return _cachedFull;
 }
 
 /**
- * Split CLAUDE.md into (1) instructions / patterns / SQL rules and
+ * Split AGENTS.md into (1) instructions / patterns / SQL rules and
  * (2) full reporting schema bullet list — so we can slice (2) per request.
  *
  * Caching-ready: block (1) is large but static until file changes; ideal
