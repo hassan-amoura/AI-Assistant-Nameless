@@ -1,4 +1,4 @@
-# PW Report Builder
+# ai-assistant-nameless
 
 AI-powered T-SQL report builder for Projectworks data in Metabase. Describe what you need in plain English — the assistant asks clarifying questions and writes production-ready SQL.
 

@@ -1,6 +1,21 @@
 // app.js — UI logic, conversation state, message rendering, report library
 // Depends on api.js being loaded first (sendToAI, extractSQL).
 
+/* ── Shell mode ─────────────────────────────────────── */
+
+function detectEmbeddedMode() {
+  const urlEmbedded = new URLSearchParams(window.location.search).get('embedded') === '1';
+  let iframeEmbedded = false;
+  try {
+    iframeEmbedded = window.self !== window.top;
+  } catch (_) {
+    iframeEmbedded = true;
+  }
+  document.documentElement.classList.toggle('pw-embedded', urlEmbedded || iframeEmbedded);
+}
+
+detectEmbeddedMode();
+
 /* ── Copy button SVG ────────────────────────────────── */
 
 const COPY_BTN_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M10 8h10s2 0 2 2v10s0 2 -2 2H10s-2 0 -2 -2V10s0 -2 2 -2" stroke-width="2"></path><path d="M4 16c-1.1 0 -2 -0.9 -2 -2V4c0 -1.1 0.9 -2 2 -2h10c1.1 0 2 0.9 2 2" stroke-width="2"></path></svg>`;
@@ -79,6 +94,9 @@ let appView = 'chat';
 /** Full library row while viewing report detail; cleared when leaving detail. */
 let detailLibraryEntry = null;
 
+/** Tracks which conversation had the SQL panel open; auto-reopens panel on chat navigation. Null = panel was explicitly closed. */
+let lastViewedReportId = null;
+
 /** Results vs SQL workspace inside report detail (Chat is a separate navigation action). */
 let reportDetailWorkspace = 'results';
 
@@ -106,10 +124,8 @@ function renderSidebar() {
 }
 
 function renderConversationList(convs, showSections = false) {
-  if (!convs.length) { convList.innerHTML = ''; return; }
-
   if (!showSections) {
-    convList.innerHTML = convs.map(c => buildConvItemHTML(c)).join('');
+    convList.innerHTML = convs.length ? convs.map(c => buildConvItemHTML(c)).join('') : '';
     return;
   }
 
@@ -117,17 +133,27 @@ function renderConversationList(convs, showSections = false) {
   const recents = convs.filter(c => !c.pinned);
   let html = '';
 
+  // Pinned section — always rendered
+  html += `<div class="conv-section-label">Pinned</div>`;
+  html += `<div class="conv-section-body" data-section="pinned">`;
   if (pinned.length) {
-    html += `<div class="conv-section-label">Pinned</div>`;
-    html += pinned.map(c => buildConvItemHTML(c)).join('');
-    if (recents.length) html += `<div class="conv-section-label conv-section-label--recents">Recent</div>`;
+    html += pinned.map(c => buildConvItemHTML(c, 'pinned')).join('');
+  } else {
+    html += `<div class="pinned-drop-zone" id="pinned-drop-zone">Drag here to pin</div>`;
+  }
+  html += `</div>`;
+
+  if (recents.length) {
+    html += `<div class="conv-section-label conv-section-label--recents">Recent</div>`;
+    html += `<div class="conv-section-body" data-section="recent">`;
+    html += recents.map(c => buildConvItemHTML(c, 'recent')).join('');
+    html += `</div>`;
   }
 
-  html += recents.map(c => buildConvItemHTML(c)).join('');
   convList.innerHTML = html;
 }
 
-function buildConvItemHTML(c) {
+function buildConvItemHTML(c, section) {
   const isActive = c.id === activeId;
   const pinIcon = c.pinned
     ? `<span class="conv-pin-icon" aria-label="Pinned"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="17" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg></span>`
@@ -256,6 +282,15 @@ function startRenameConversation(id) {
 }
 
 function archiveConversation(id) {
+  showConfirmModal(
+    'Archive chat?',
+    'This will move the chat to your archive. You can restore it from Settings.',
+    'Archive',
+    () => _performArchiveConversation(id)
+  );
+}
+
+function _performArchiveConversation(id) {
   const idx = conversations.findIndex(c => c.id === id);
   if (idx === -1) return;
   const [conv] = conversations.splice(idx, 1);
@@ -268,6 +303,15 @@ function archiveConversation(id) {
 }
 
 function deleteConversation(id) {
+  showConfirmModal(
+    'Delete chat?',
+    'Are you sure you want to delete this chat? This cannot be undone.',
+    'Delete',
+    () => _performDeleteConversation(id)
+  );
+}
+
+function _performDeleteConversation(id) {
   const idx = conversations.findIndex(c => c.id === id);
   if (idx === -1) return;
   const [conv] = conversations.splice(idx, 1);
@@ -341,6 +385,94 @@ function updateCollapseToggleIcon(isCollapsed) {
   btn.title = isCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
 }
 
+function _ensureSidebarOpen() {
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar) return;
+  if (sidebar.classList.contains('collapsed')) {
+    sidebar.classList.remove('collapsed');
+    updateCollapseToggleIcon(false);
+  }
+  if (window.innerWidth <= 768 && !sidebar.classList.contains('sidebar-open')) {
+    sidebar.classList.add('sidebar-open');
+  }
+}
+
+function handleReportDetailChatBtn() {
+  const r = detailLibraryEntry;
+  const title = (r && r.title) || 'this report';
+  const cid = r && r.conversationId != null ? r.conversationId : null;
+  const existingConv = cid !== null ? conversations.find(c => c.id === cid) : null;
+
+  leaveReportDetailShell();
+  appView = 'chat';
+  exitLibraryLayoutToChat();
+
+  const chatColReveal = document.getElementById('chat-col');
+  if (chatColReveal) {
+    chatColReveal.classList.add('rd-reveal-from-detail');
+    setTimeout(() => chatColReveal.classList.remove('rd-reveal-from-detail'), 450);
+  }
+
+  if (existingConv) {
+    activeId = cid;
+    renderSidebar();
+    renderMessages();
+    const conv = getActive();
+    if (conv && hasCompletedReport(conv)) {
+      prepareSQLPanelContent(getReportSql(conv), conv.title, getReportCategoryForMock(conv));
+      if (lastViewedReportId !== null) {
+        sqlPanel.classList.add('open');
+        lastViewedReportId = activeId;
+      } else {
+        sqlPanel.classList.remove('open');
+      }
+      resetCopyBtn();
+      persistUiSnapshot();
+    } else {
+      _hideSQLPanel();
+    }
+  } else {
+    const id = Date.now();
+    const openingMsg = `I have full context of ${title} — what would you like to refine?`;
+    const cat = (r && r.category) || (r ? inferReportCategory(r.sql || '', r.title || '') : 'Reports');
+    conversations.unshift({
+      id,
+      title,
+      messages: [{ role: 'assistant', content: openingMsg }],
+      sql: (r && r.sql) || null,
+      reasoning: (r && r.reasoning) || null,
+      savedReport: r ? {
+        sql: r.sql,
+        reasoning: r.reasoning || null,
+        title: r.title,
+        question: r.question || '',
+        category: cat,
+        completedAt: r.savedAt || new Date().toISOString(),
+      } : null,
+      reportLibrarySaved: !!r,
+    });
+    activeId = id;
+    renderSidebar();
+    renderMessages();
+    if (r && r.sql) {
+      prepareSQLPanelContent(r.sql, title, cat);
+      if (lastViewedReportId !== null) {
+        sqlPanel.classList.add('open');
+        lastViewedReportId = activeId;
+      } else {
+        sqlPanel.classList.remove('open');
+      }
+      resetCopyBtn();
+    }
+    saveConversations();
+  }
+
+  syncSaveReportButtonUI();
+  updateViewReportTab();
+  updateSidebarNavLabels();
+  inputEl.focus();
+}
+
 function initSidebar() {
   if (localStorage.getItem(userKey(SIDEBAR_COLLAPSED_KEY)) === '1') {
     const sidebar = document.getElementById('sidebar');
@@ -348,6 +480,142 @@ function initSidebar() {
     updateCollapseToggleIcon(true);
   }
   updateSidebarNavLabels();
+  initDragBehavior();
+}
+
+/* ── Sidebar drag interactions ──────────────────────── */
+
+const _drag = {
+  id: null,
+  section: null,
+  startX: 0,
+  startY: 0,
+  active: false,
+  ghost: null,
+};
+let _dragConsumeNextClick = false;
+
+function initDragBehavior() {
+  convList.addEventListener('mousedown', _onConvMousedown);
+  // capture phase: consume click if a drag just finished
+  convList.addEventListener('click', _onConvClickCapture, true);
+}
+
+function _onConvClickCapture(e) {
+  if (_dragConsumeNextClick) {
+    _dragConsumeNextClick = false;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }
+}
+
+function _onConvMousedown(e) {
+  if (e.button !== 0) return;
+  const item = e.target.closest('.conv-item[data-conv-id]');
+  if (!item) return;
+  if (e.target.closest('.conv-menu-btn')) return;
+
+  const sectionEl = item.closest('[data-section]');
+  const sourceSection = sectionEl ? sectionEl.dataset.section : 'recent';
+  if (sourceSection === 'pinned') return;
+
+  _drag.id = parseInt(item.dataset.convId, 10);
+  _drag.section = sourceSection;
+  _drag.startX = e.clientX;
+  _drag.startY = e.clientY;
+  _drag.active = false;
+
+  document.addEventListener('mousemove', _onDragMove);
+  document.addEventListener('mouseup', _onDragEnd, { once: true });
+}
+
+function _onDragMove(e) {
+  const dx = e.clientX - _drag.startX;
+  const dy = e.clientY - _drag.startY;
+  if (!_drag.active && Math.sqrt(dx * dx + dy * dy) < 5) return;
+
+  if (!_drag.active) {
+    _drag.active = true;
+    _createDragGhost(e);
+    convList.classList.add('dragging');
+    document.body.classList.add('sidebar-dragging');
+    // Dim the source item
+    const srcItem = convList.querySelector(`.conv-item[data-conv-id="${_drag.id}"]`);
+    if (srcItem) srcItem.classList.add('conv-item--dragging');
+  }
+
+  e.preventDefault();
+
+  if (_drag.ghost) {
+    _drag.ghost.style.top  = (e.clientY + 10) + 'px';
+    _drag.ghost.style.left = (e.clientX + 14) + 'px';
+  }
+  _updateDragHighlight(e);
+}
+
+function _createDragGhost(e) {
+  const conv = conversations.find(c => c.id === _drag.id);
+  if (!conv) return;
+  const ghost = document.createElement('div');
+  ghost.className = 'drag-ghost';
+  ghost.textContent = conv.title;
+  ghost.style.top  = (e.clientY + 10) + 'px';
+  ghost.style.left = (e.clientX + 14) + 'px';
+  document.body.appendChild(ghost);
+  _drag.ghost = ghost;
+}
+
+function _updateDragHighlight(e) {
+  convList.querySelectorAll('.drop-target-active').forEach(el => el.classList.remove('drop-target-active'));
+  const under = document.elementFromPoint(e.clientX, e.clientY);
+  if (!under) return;
+  const section = under.closest('[data-section]');
+  if (section && section.dataset.section === 'pinned') section.classList.add('drop-target-active');
+}
+
+function _onDragEnd(e) {
+  document.removeEventListener('mousemove', _onDragMove);
+
+  if (!_drag.active) {
+    _resetDrag();
+    return;
+  }
+
+  _dragConsumeNextClick = true;
+  convList.classList.remove('dragging');
+  convList.querySelectorAll('.drop-target-active').forEach(el => el.classList.remove('drop-target-active'));
+
+  if (_drag.ghost) { _drag.ghost.remove(); _drag.ghost = null; }
+
+  const under = document.elementFromPoint(e.clientX, e.clientY);
+  const targetSectionEl = under && under.closest('[data-section]');
+  const targetSection   = targetSectionEl ? targetSectionEl.dataset.section : null;
+  const conv = conversations.find(c => c.id === _drag.id);
+
+  if (conv && targetSection === 'pinned' && _drag.section === 'recent') {
+    // Recent → Pinned: pin and move to top
+    conv.pinned = true;
+    const idx = conversations.indexOf(conv);
+    if (idx > -1) conversations.splice(idx, 1);
+    conversations.unshift(conv);
+    saveConversations();
+    renderSidebar();
+  }
+
+  _resetDrag();
+}
+
+function _resetDrag() {
+  if (_drag.id !== null) {
+    const srcItem = convList.querySelector(`.conv-item[data-conv-id="${_drag.id}"]`);
+    if (srcItem) srcItem.classList.remove('conv-item--dragging');
+  }
+  _drag.id = null;
+  _drag.section = null;
+  _drag.active = false;
+  if (_drag.ghost) { _drag.ghost.remove(); _drag.ghost = null; }
+  convList.classList.remove('dragging');
+  document.body.classList.remove('sidebar-dragging');
 }
 
 function applyTenantShell() {
@@ -414,11 +682,16 @@ function switchTo(id) {
   const conv = getActive();
   if (conv && hasCompletedReport(conv)) {
     prepareSQLPanelContent(getReportSql(conv), conv.title, getReportCategoryForMock(conv));
-    sqlPanel.classList.remove('open');
+    if (lastViewedReportId !== null) {
+      sqlPanel.classList.add('open');
+      lastViewedReportId = id;
+    } else {
+      sqlPanel.classList.remove('open');
+    }
     resetCopyBtn();
     persistUiSnapshot();
   } else {
-    closeSQLPanel();
+    _hideSQLPanel();
   }
   syncSaveReportButtonUI();
   updateViewReportTab();
@@ -426,14 +699,19 @@ function switchTo(id) {
 }
 
 function newReport() {
-  if (appView === 'report-detail') {
+  if (appView === 'settings') {
+    const page = document.getElementById('settings-page');
+    if (page) page.style.display = 'none';
+    const chatCol = document.getElementById('chat-col');
+    if (chatCol) chatCol.style.display = '';
+    sqlPanel.style.display = '';
+  } else if (appView === 'report-detail') {
     leaveReportDetailShell();
-    appView = 'chat';
     exitLibraryLayoutToChat();
   } else if (appView === 'library') {
     exitLibraryLayoutToChat();
-    appView = 'chat';
   }
+  appView = 'chat';
   activeId = null;
   renderSidebar();
   renderMessages();
@@ -524,7 +802,7 @@ function buildMsgEl(role, content) {
   el.innerHTML = `
     <div class="message-header">
       <div class="avatar ${cssRole}">${avatarInner}</div>
-      <span class="message-sender">${role === 'assistant' ? 'PW Report Builder' : 'You'}</span>
+      <span class="message-sender">${role === 'assistant' ? 'ai-assistant-nameless' : 'You'}</span>
     </div>
     <div class="message-body">
       <div class="bubble">${bubbleContent}</div>
@@ -625,7 +903,7 @@ function appendTyping() {
   el.innerHTML = `
     <div class="message-header">
       <div class="avatar ai avatar--pulsing">${PW_AVATAR_SVG}</div>
-      <span class="message-sender">PW Report Builder</span>
+      <span class="message-sender">ai-assistant-nameless</span>
     </div>
     <div class="message-body">
       <div class="bubble typing-placeholder-bubble">
@@ -811,7 +1089,10 @@ function restoreUiFromSnapshot(snap) {
       const conv = getActive();
       if (conv && hasCompletedReport(conv)) {
         prepareSQLPanelContent(getReportSql(conv), conv.title, getReportCategoryForMock(conv));
-        if (snap.sqlPanelOpen) sqlPanel.classList.add('open');
+        if (snap.sqlPanelOpen) {
+          sqlPanel.classList.add('open');
+          lastViewedReportId = activeId;
+        }
       }
       return;
     }
@@ -826,6 +1107,7 @@ function restoreUiFromSnapshot(snap) {
     detailEl.style.display = 'flex';
     detailEl.offsetHeight;
     detailEl.classList.add('rd-visible');
+    _ensureSidebarOpen();
     populateReportDetailContent(r);
     switchReportDetailWorkspace(reportDetailWorkspace, false);
     return;
@@ -853,7 +1135,10 @@ function restoreUiFromSnapshot(snap) {
   const conv = getActive();
   if (conv && hasCompletedReport(conv)) {
     prepareSQLPanelContent(getReportSql(conv), conv.title, getReportCategoryForMock(conv));
-    if (snap.sqlPanelOpen) sqlPanel.classList.add('open');
+    if (snap.sqlPanelOpen) {
+      sqlPanel.classList.add('open');
+      lastViewedReportId = activeId;
+    }
   }
 }
 
@@ -1060,13 +1345,14 @@ function viewReportPage() {
 
   const r = {
     id: null,
+    conversationId: conv ? conv.id : null,
     title: conv.title || 'Report',
     sql: getReportSql(conv),
     reasoning: getReportReasoning(conv),
     category: getReportCategoryForMock(conv),
   };
 
-  detailLibraryEntry = null;
+  detailLibraryEntry = r;
   appView = 'report-detail';
   reportDetailWorkspace = 'results';
 
@@ -1094,6 +1380,7 @@ function viewReportPage() {
   detail.offsetHeight;
   detail.classList.add('rd-visible');
 
+  _ensureSidebarOpen();
   populateReportDetailContent(r);
   switchReportDetailWorkspace('results', false);
   updateSidebarNavLabels();
@@ -1136,6 +1423,7 @@ function switchToLibrary() {
       chatCol.classList.remove('main-fade-out');
     }, 220);
   }
+  lastViewedReportId = null;
   sqlPanel.classList.remove('open');
   sqlPanel.style.display = 'none';
   const lib = document.getElementById('library-mode');
@@ -1156,11 +1444,16 @@ function switchToChat() {
   const conv = getActive();
   if (conv && hasCompletedReport(conv)) {
     prepareSQLPanelContent(getReportSql(conv), conv.title, getReportCategoryForMock(conv));
-    sqlPanel.classList.remove('open');
+    if (lastViewedReportId !== null) {
+      sqlPanel.classList.add('open');
+      lastViewedReportId = activeId;
+    } else {
+      sqlPanel.classList.remove('open');
+    }
     resetCopyBtn();
     persistUiSnapshot();
   } else {
-    closeSQLPanel();
+    _hideSQLPanel();
   }
   syncSaveReportButtonUI();
   updateViewReportTab();
@@ -1242,6 +1535,7 @@ function updateSidebarNavLabels() {
 
 function handleSidebarMainNav() {
   if (appView === 'chat') switchToLibrary();
+  else if (appView === 'settings') closeSettingsView();
   else returnToChatFromSidebar();
 }
 
@@ -1356,11 +1650,16 @@ function returnToChatFromReportDetail() {
   const conv = getActive();
   if (conv && hasCompletedReport(conv)) {
     prepareSQLPanelContent(getReportSql(conv), conv.title, getReportCategoryForMock(conv));
-    sqlPanel.classList.remove('open');
+    if (lastViewedReportId !== null) {
+      sqlPanel.classList.add('open');
+      lastViewedReportId = activeId;
+    } else {
+      sqlPanel.classList.remove('open');
+    }
     resetCopyBtn();
     persistUiSnapshot();
   } else {
-    closeSQLPanel();
+    _hideSQLPanel();
   }
   syncSaveReportButtonUI();
   updateViewReportTab();
@@ -1396,6 +1695,15 @@ function switchFromReportDetailToLibrary() {
 
 function populateReportDetailContent(r) {
   document.getElementById('rd-title').textContent = r.title || 'Report';
+
+  // Set dynamic chat button label
+  const chatBtn = document.getElementById('rd-chat-btn');
+  if (chatBtn) {
+    const cid = r && r.conversationId != null ? r.conversationId : null;
+    const hasConv = cid !== null && conversations.some(c => c.id === cid);
+    chatBtn.textContent = hasConv ? 'Continue in Chat →' : 'Open in Chat →';
+  }
+
   const kicker = document.getElementById('rd-category-line');
   if (kicker) {
     const cat = r.category || inferReportCategory(r.sql, r.title || '');
@@ -1442,6 +1750,7 @@ function openReportFromLibrary(libraryId) {
   detail.offsetHeight;
   detail.classList.add('rd-visible');
 
+  _ensureSidebarOpen();
   populateReportDetailContent(r);
   switchReportDetailWorkspace('results', false);
   updateSidebarNavLabels();
@@ -1455,10 +1764,7 @@ function copyReportDetailSql() {
   const raw = (rdPre && rdPre._rawSQL) || (rdPre && rdPre.textContent) || '';
   if (!raw) return;
   navigator.clipboard.writeText(raw).then(() => {
-    if (!btn) return;
-    btn.setAttribute('data-tooltip', 'Copied!');
-    clearTimeout(btn._copyTimer);
-    btn._copyTimer = setTimeout(() => btn.setAttribute('data-tooltip', 'Copy'), 2000);
+    if (btn) showCopyTooltip(btn, 'Copied!');
   });
 }
 
@@ -1480,7 +1786,7 @@ function downloadReportFromDetail() {
 
   const reasoningText = r.reasoning || null;
   const hr = '-'.repeat(48);
-  let out = `PW Report Builder — Report Export\n${hr}\nReport:    ${title}\nGenerated: ${timestamp}\n`;
+  let out = `ai-assistant-nameless — Report Export\n${hr}\nReport:    ${title}\nGenerated: ${timestamp}\n`;
   if (reasoningText) {
     out += `\n${hr}\nQUERY REASONING\n${hr}\n`;
     reasoningText.split('\n').map(l => l.trim()).filter(Boolean).forEach(l => { out += `${l}\n`; });
@@ -1533,7 +1839,8 @@ function sendMessage() {
   appendTyping();
 
   if (isFirst) {
-    generateTitleWithAI(text).then(title => {
+    generateTitleWithAI(text).then(aiTitle => {
+      const title = aiTitle || generateTitle(text);
       if (title && activeId === conv.id) {
         conv.title = title;
         if (conv.savedReport) conv.savedReport.title = title;
@@ -1542,7 +1849,9 @@ function sendMessage() {
         if (sqlPanel.classList.contains('open'))
           document.getElementById('sql-panel-name').textContent = title;
       }
-    }).catch(() => {});
+    }).catch(() => {
+      // AI title failed — local title from generateTitle() already set at creation time
+    });
   }
 
   let aiBubble = null;
@@ -1703,15 +2012,21 @@ function prepareSQLPanelContent(sql, title, categoryOpt) {
 function openSQLPanel(sql, title, categoryOpt) {
   prepareSQLPanelContent(sql, title, categoryOpt);
   sqlPanel.classList.add('open');
+  lastViewedReportId = activeId;
+  updateViewReportTab();
+  persistUiSnapshot();
+}
+
+function _hideSQLPanel() {
+  sqlPanel.classList.remove('open');
+  resetCopyBtn();
   updateViewReportTab();
   persistUiSnapshot();
 }
 
 function closeSQLPanel() {
-  sqlPanel.classList.remove('open');
-  resetCopyBtn();
-  updateViewReportTab();
-  persistUiSnapshot();
+  lastViewedReportId = null;
+  _hideSQLPanel();
 }
 
 function switchPanelTab(tabName) {
@@ -1729,15 +2044,33 @@ function switchPanelTab(tabName) {
   }
 }
 
+function showCopyTooltip(btn, text) {
+  const existing = document.getElementById('_copy-tooltip');
+  if (existing) existing.remove();
+  const tooltip = document.createElement('div');
+  tooltip.id = '_copy-tooltip';
+  tooltip.className = 'copy-tooltip-body';
+  tooltip.textContent = text;
+  document.body.appendChild(tooltip);
+  const rect = btn.getBoundingClientRect();
+  const tw = tooltip.offsetWidth;
+  const th = tooltip.offsetHeight;
+  let top = rect.top - th - 6;
+  let left = rect.left + rect.width / 2 - tw / 2;
+  if (top < 4) top = rect.bottom + 6;
+  if (left < 4) left = 4;
+  if (left + tw > window.innerWidth - 4) left = window.innerWidth - tw - 4;
+  tooltip.style.cssText = `position:fixed;top:${top}px;left:${left}px;z-index:9999;`;
+  const dismiss = () => { tooltip.remove(); document.removeEventListener('click', dismiss); };
+  setTimeout(() => dismiss(), 2000);
+  setTimeout(() => document.addEventListener('click', dismiss, { once: true }), 10);
+}
+
 function copySQLPanel() {
   const btn = document.getElementById('btn-copy-panel');
   const raw = sqlOutput._rawSQL || sqlOutput.textContent;
   navigator.clipboard.writeText(raw).then(() => {
-    if (btn) {
-      btn.setAttribute('data-tooltip', 'Copied!');
-      clearTimeout(btn._copyTimer);
-      btn._copyTimer = setTimeout(() => btn.setAttribute('data-tooltip', 'Copy'), 2000);
-    }
+    if (btn) showCopyTooltip(btn, 'Copied!');
   });
 }
 
@@ -1947,7 +2280,7 @@ function downloadReport() {
 
   const reasoningText = getReportReasoning(conv);
   const hr = '-'.repeat(48);
-  let out  = `PW Report Builder — Report Export\n${hr}\nReport:    ${title}\nGenerated: ${timestamp}\n`;
+  let out  = `ai-assistant-nameless — Report Export\n${hr}\nReport:    ${title}\nGenerated: ${timestamp}\n`;
   if (reasoningText) {
     out += `\n${hr}\nQUERY REASONING\n${hr}\n`;
     reasoningText.split('\n').map(l => l.trim()).filter(Boolean).forEach(l => { out += `${l}\n`; });
@@ -2055,17 +2388,72 @@ function esc(s) {
 /* ── Title generation ───────────────────────────────── */
 
 function generateTitle(text) {
-  const stop = new Set([
-    'show','me','a','an','the','of','for','by','with','and','or','in','on','at','to',
-    'i','want','need','can','get','give','please','what','how','is','are','was','were',
-    'list','all','some','each','every','build','create','make','write','give','report',
-    'query','sql','data','table','from','where','select'
+  const normalized = String(text || '')
+    .toLowerCase()
+    .replace(/\b(i'?m)\b/g, 'i am')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return 'New Chat';
+
+  const words = normalized.split(' ');
+  const has = (...terms) => terms.some(term => words.includes(term));
+  const hasPhrase = phrase => normalized.includes(phrase);
+
+  const titleCase = phrase => phrase
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 6)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+
+  if (has('testing', 'test') && has('chat', 'chats')) {
+    if (has('summarize', 'summarizes', 'summary', 'summaries', 'asking'))
+      return 'Testing Chat Summaries';
+    if (has('look', 'looks', 'appearance', 'visual', 'style', 'design'))
+      return 'Testing Chat Appearance';
+    return 'Testing Chat Experience';
+  }
+
+  if (has('project', 'projects') && (hasPhrase('over budget') || (has('over') && has('budget'))))
+    return 'Over Budget Projects';
+
+  const groupedMetrics = [
+    'revenue', 'margin', 'profitability', 'utilisation', 'utilization',
+    'capacity', 'wip', 'invoices', 'expenses', 'forecast'
+  ];
+  const groupables = ['client', 'project', 'person', 'team', 'manager', 'month', 'quarter'];
+  const metric = groupedMetrics.find(w => words.includes(w));
+  const byIdx = words.indexOf('by');
+  if (metric && byIdx !== -1) {
+    const group = words.slice(byIdx + 1).find(w => groupables.includes(w));
+    if (group) return titleCase(`${metric} by ${group}`);
+  }
+
+  const replacements = new Map([
+    ['summarize', 'summaries'],
+    ['summarizes', 'summaries'],
+    ['summary', 'summaries'],
+    ['looks', 'appearance'],
+    ['look', 'appearance'],
+    ['visual', 'appearance'],
+    ['chats', 'chat'],
   ]);
-  const words = text.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/);
-  const kept  = words.filter(w => w.length > 1 && !stop.has(w)).slice(0, 5);
-  if (!kept.length) return text.trim().split(/\s+/).slice(0, 5).join(' ');
-  const out = kept.join(' ');
-  return out.charAt(0).toUpperCase() + out.slice(1);
+  const stop = new Set([
+    'show','me','a','an','the','of','for','with','and','or','in','on','at','to','if',
+    'i','am','want','need','can','get','give','please','what','how','is','are','was','were',
+    'list','all','some','each','every','build','create','make','write','report',
+    'query','sql','data','table','from','where','select','see','now','last','this','that'
+  ]);
+  const kept = [];
+  words.forEach(word => {
+    const mapped = replacements.get(word) || word;
+    if (mapped.length <= 1 || stop.has(mapped) || kept.includes(mapped)) return;
+    kept.push(mapped);
+  });
+
+  if (!kept.length) return titleCase(words.filter(w => w.length > 1).slice(0, 5).join(' ') || 'New Chat');
+  return titleCase(kept.slice(0, 5).join(' '));
 }
 
 /* ── File attach ────────────────────────────────────── */
@@ -2128,26 +2516,38 @@ document.addEventListener('keydown', e => {
   }
 });
 
+/* ── Confirm modal (delete / archive) ───────────────── */
+
+let _pendingConfirmAction = null;
+
+function showConfirmModal(title, body, actionLabel, onConfirm) {
+  _pendingConfirmAction = onConfirm;
+  const titleEl  = document.getElementById('confirm-modal-title');
+  const bodyEl   = document.getElementById('confirm-modal-body');
+  const actionEl = document.getElementById('confirm-modal-action-btn');
+  if (titleEl)  titleEl.textContent  = title;
+  if (bodyEl)   bodyEl.textContent   = body;
+  if (actionEl) actionEl.textContent = actionLabel;
+  const modal = document.getElementById('confirm-modal');
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeConfirmModal() {
+  _pendingConfirmAction = null;
+  const modal = document.getElementById('confirm-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function executeConfirmModal() {
+  const fn = _pendingConfirmAction;
+  closeConfirmModal();
+  if (fn) fn();
+}
+
 /* ── Settings panel ─────────────────────────────────── */
 
-function openSettings() {
-  const panel = document.getElementById('settings-panel');
-  if (!panel) return;
-  panel.classList.add('settings-open');
-  panel.setAttribute('aria-hidden', 'false');
-  updateSettingsProfileUI();
-  applyPreferencesUI(loadPreferences());
-  renderSettingsArchived();
-  renderSettingsDeleted();
-  loadMemoryFromServer().then(() => { renderMemoryItems(); updateMemoryCounter(); });
-}
-
-function closeSettings() {
-  const panel = document.getElementById('settings-panel');
-  if (!panel) return;
-  panel.classList.remove('settings-open');
-  panel.setAttribute('aria-hidden', 'true');
-}
+function openSettings() { openSettingsView(); }
+function closeSettings() { closeSettingsView(); }
 
 function getInitials(str) {
   if (!str) return '?';
@@ -2157,15 +2557,7 @@ function getInitials(str) {
 }
 
 function updateSettingsProfileUI() {
-  if (!pwCurrentUser) return;
-  const email = pwCurrentUser.email || '';
-  const name  = pwCurrentUser.name || email.split('@')[0] || '';
-  const nameEl   = document.getElementById('settings-profile-name');
-  const emailEl  = document.getElementById('settings-profile-email');
-  const avatarEl = document.getElementById('settings-profile-avatar');
-  if (nameEl)   nameEl.textContent  = name;
-  if (emailEl)  emailEl.textContent = email;
-  if (avatarEl) avatarEl.textContent = getInitials(name || email);
+  _updateSettingsPageProfile();
 }
 
 function renderSettingsArchived() {
@@ -2201,6 +2593,56 @@ function renderSettingsDeleted() {
         <div class="settings-conv-title">${escapeHTML(c.title)}</div>
         <div class="settings-conv-meta">Deleted ${deletedDate} · ${daysLeft} day${daysLeft !== 1 ? 's' : ''} remaining</div>
         <button type="button" class="btn-settings-restore" onclick="restoreDeletedConversation(${c.id})">Restore</button>
+      </div>`;
+  }).join('');
+}
+
+/* ── Connections card ───────────────────────────────── */
+
+async function loadAndRenderConnections() {
+  const listEl = document.getElementById('settings-connections-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<p class="settings-empty">Loading…</p>';
+  try {
+    const res = await fetch('/api/integrations/status');
+    if (!res.ok) throw new Error('fetch failed');
+    const data = await res.json();
+    renderConnectionsCard(listEl, data.integrations || []);
+  } catch {
+    listEl.innerHTML = '<p class="settings-empty">Could not load connection status.</p>';
+  }
+}
+
+function renderConnectionsCard(listEl, integrations) {
+  if (!integrations.length) {
+    listEl.innerHTML = '<p class="settings-empty">No integrations configured.</p>';
+    return;
+  }
+
+  const statusDotClass = {
+    connected:     'settings-conn-dot--connected',
+    disconnected:  'settings-conn-dot--disconnected',
+    not_configured:'settings-conn-dot--unconfigured',
+    coming_soon:   'settings-conn-dot--soon',
+  };
+
+  listEl.innerHTML = integrations.map(intg => {
+    const dotClass = statusDotClass[intg.status] || 'settings-conn-dot--soon';
+    const metaLine = intg.lastCheckedAt
+      ? `<div class="settings-conn-meta">Checked ${new Date(intg.lastCheckedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>`
+      : '';
+    const ctaHtml = intg.status === 'coming_soon'
+      ? `<span class="settings-conn-badge">Coming soon</span>`
+      : `<button type="button" class="btn-settings-conn-action">${escapeHTML(intg.actionLabel)}</button>`;
+    return `
+      <div class="settings-conn-row">
+        <div class="settings-conn-dot ${dotClass}"></div>
+        <div class="settings-conn-info">
+          <div class="settings-conn-label">${escapeHTML(intg.label)}</div>
+          <div class="settings-conn-desc">${escapeHTML(intg.description)}</div>
+          ${metaLine}
+        </div>
+        <div class="settings-conn-cta">${ctaHtml}</div>
       </div>`;
   }).join('');
 }
@@ -2334,12 +2776,16 @@ async function loadAuthSession() {
     const emailEl = document.getElementById('sidebar-user-email');
     if (emailEl && pwCurrentUser?.email) {
       emailEl.textContent = pwCurrentUser.email;
-      emailEl.title = pwCurrentUser.email;
+    }
+    const nameEl = document.getElementById('sidebar-user-name');
+    if (nameEl && pwCurrentUser) {
+      const displayStr = (pwPreferences && pwPreferences.name) || pwCurrentUser.name || pwCurrentUser.email.split('@')[0] || '';
+      nameEl.textContent = displayStr;
     }
     const avatarEl = document.getElementById('sidebar-user-avatar');
     if (avatarEl && pwCurrentUser) {
-      const name = pwCurrentUser.name || pwCurrentUser.email || '';
-      avatarEl.textContent = getInitials(name);
+      const displayStr = (pwPreferences && pwPreferences.name) || pwCurrentUser.name || pwCurrentUser.email || '';
+      avatarEl.textContent = getInitials(displayStr);
     }
   } catch (_) {
     /* offline — leave UI usable until next request fails */
@@ -2444,43 +2890,151 @@ function closeProfilePopover() {
   _profilePopoverOpen = false;
 }
 
-/* ── Settings page (main-area overlay) ──────────────── */
+/* ── Settings view (appView === 'settings') ──────────── */
 
-function openSettingsPage() {
+function openSettingsView() {
   closeProfilePopover();
+  appView = 'settings';
+
+  // Hide other main-area views
+  const chatCol = document.getElementById('chat-col');
+  const lib     = document.getElementById('library-mode');
+  const detail  = document.getElementById('report-detail-mode');
+  if (chatCol) chatCol.style.display = 'none';
+  if (lib) { lib.classList.remove('lib-visible'); lib.style.display = 'none'; }
+  if (detail) { detail.classList.remove('rd-visible'); detail.style.display = 'none'; }
+  sqlPanel.style.display = 'none';
+
   const page = document.getElementById('settings-page');
   if (!page) return;
   page.style.display = 'flex';
+
   _updateSettingsPageProfile();
   switchSettingsTab('general');
+  updateSidebarNavLabels();
 }
 
-function closeSettingsPage() {
+function closeSettingsView() {
+  appView = 'chat';
+
   const page = document.getElementById('settings-page');
   if (page) page.style.display = 'none';
+
+  const chatCol = document.getElementById('chat-col');
+  if (chatCol) chatCol.style.display = '';
+  sqlPanel.style.display = '';
+
+  renderMessages();
+  syncSaveReportButtonUI();
+  updateViewReportTab();
+  updateSidebarNavLabels();
+  inputEl.focus();
 }
 
+function openSettingsPage() { openSettingsView(); }
+function closeSettingsPage() { closeSettingsView(); }
+
 function _updateSettingsPageProfile() {
-  if (!pwCurrentUser) return;
-  const name  = pwCurrentUser.name || pwCurrentUser.email.split('@')[0] || '';
-  const email = pwCurrentUser.email || '';
+  const name        = (pwPreferences && pwPreferences.name) || (pwCurrentUser && (pwCurrentUser.name || pwCurrentUser.email.split('@')[0])) || '';
+  const displayName = (pwPreferences && pwPreferences.displayName) || '';
+  const email       = (pwCurrentUser && pwCurrentUser.email) || '';
+
   const avEl  = document.getElementById('settings-page-avatar');
-  const nmEl  = document.getElementById('settings-page-name');
   const emEl  = document.getElementById('settings-page-email-display');
+  const fnEl  = document.getElementById('sp-full-name');
+  const dnEl  = document.getElementById('sp-display-name');
+
   if (avEl) avEl.textContent = getInitials(name || email);
-  if (nmEl) nmEl.textContent = name || '—';
   if (emEl) emEl.textContent = email || '—';
+  if (fnEl) fnEl.value = name;
+  if (dnEl) dnEl.value = displayName;
 }
 
 function switchSettingsTab(tab) {
-  ['general', 'faq', 'memory'].forEach(t => {
+  ['general', 'capabilities', 'data', 'faq'].forEach(t => {
     const pane = document.getElementById('settings-tab-' + t);
     const nav  = document.getElementById('settings-nav-' + t);
     if (pane) pane.style.display = t === tab ? 'block' : 'none';
     if (nav)  nav.classList.toggle('active', t === tab);
   });
-  if (tab === 'memory') {
-    loadMemoryFromServer().then(() => renderMemoryItems());
+  if (tab === 'capabilities') {
+    loadMemoryFromServer().then(() => { renderMemoryItems(); updateMemoryCounter(); });
+    loadAndRenderConnections();
+  }
+  if (tab === 'data') {
+    renderSettingsArchived();
+    renderSettingsDeleted();
+  }
+}
+
+async function saveProfileSettings() {
+  const fnEl = document.getElementById('sp-full-name');
+  const dnEl = document.getElementById('sp-display-name');
+  const name = fnEl ? fnEl.value.trim() : '';
+  const displayName = dnEl ? dnEl.value.trim() : '';
+
+  const ok = await updatePwPreferences({ name, displayName });
+  if (ok && pwPreferences) {
+    pwPreferences.name = name;
+    pwPreferences.displayName = displayName;
+  }
+
+  const avEl = document.getElementById('settings-page-avatar');
+  const email = (pwCurrentUser && pwCurrentUser.email) || '';
+  if (avEl) avEl.textContent = getInitials(name || email);
+
+  const nameEl = document.getElementById('sidebar-user-name');
+  if (nameEl) nameEl.textContent = name || (pwCurrentUser && pwCurrentUser.email.split('@')[0]) || '';
+
+  const confirm = document.getElementById('sp-save-confirm');
+  if (confirm) {
+    confirm.hidden = !ok;
+    if (ok) setTimeout(() => { confirm.hidden = true; }, 3000);
+  }
+}
+
+async function changePassword() {
+  const curEl  = document.getElementById('sp-current-pw');
+  const newEl  = document.getElementById('sp-new-pw');
+  const conEl  = document.getElementById('sp-confirm-pw');
+  const fbEl   = document.getElementById('sp-pw-feedback');
+
+  const currentPassword  = curEl  ? curEl.value  : '';
+  const newPassword      = newEl  ? newEl.value  : '';
+  const confirmPassword  = conEl  ? conEl.value  : '';
+
+  if (fbEl) { fbEl.textContent = ''; fbEl.className = 'sp-pw-feedback'; }
+
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    if (fbEl) { fbEl.textContent = 'All fields are required.'; fbEl.classList.add('sp-pw-feedback--error'); }
+    return;
+  }
+  if (newPassword !== confirmPassword) {
+    if (fbEl) { fbEl.textContent = 'New passwords do not match.'; fbEl.classList.add('sp-pw-feedback--error'); }
+    return;
+  }
+
+  try {
+    const r = await fetch('/api/auth/password', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ currentPassword, newPassword, confirmPassword }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (fbEl) { fbEl.textContent = data.error || 'Could not update password.'; fbEl.classList.add('sp-pw-feedback--error'); }
+      return;
+    }
+    if (fbEl) { fbEl.textContent = 'Password updated ✓'; fbEl.classList.add('sp-pw-feedback--ok'); }
+    if (curEl) curEl.value = '';
+    if (newEl) newEl.value = '';
+    if (conEl) conEl.value = '';
+    setTimeout(() => {
+      if (fbEl) { fbEl.textContent = ''; fbEl.className = 'sp-pw-feedback'; }
+    }, 4000);
+  } catch {
+    if (fbEl) { fbEl.textContent = 'Network error — please try again.'; fbEl.classList.add('sp-pw-feedback--error'); }
   }
 }
 
@@ -2492,5 +3046,6 @@ async function addMemoryItem() {
   _memoryItems.push(val);
   await saveMemoryToServer(_memoryItems);
   renderMemoryItems();
+  updateMemoryCounter();
   input.value = '';
 }

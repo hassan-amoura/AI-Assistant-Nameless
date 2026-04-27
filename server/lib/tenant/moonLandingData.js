@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Projectworks — internal tenant config for PW Report Builder.
+ * Projectworks — internal tenant config for ai-assistant-nameless.
  *
  * SWAP GUIDE: Replace this module with a real tenant config to go live.
  * The exported TENANT_CONFIG shape is the canonical schema — real data

@@ -146,6 +146,7 @@ function buildFrameAncestors(domains) {
 const { createPersistence } = require('./server/lib/persistence/backends');
 const { createAttachUserMiddleware, requireAuthenticatedPage } = require('./server/lib/auth/authMiddleware');
 const { createHttpAuthHandlers } = require('./server/lib/auth/httpAuthHandlers');
+const { hashPassword, verifyPassword } = require('./server/lib/auth/passwordService');
 
 const persistence = createPersistence();
 const { backend, userRepo, sessionRepo, preferencesService } = persistence;
@@ -320,11 +321,131 @@ app.get('/api/schema-version', (req, res) => {
   });
 });
 
+/* ── GET /api/integrations/status ──────────────────── */
+// Reports connection health for each configured integration.
+// Never exposes hostnames, env var names, secrets, or raw DB errors.
+
+app.get('/api/integrations/status', async (req, res) => {
+  const checkedAt = new Date().toISOString();
+  const dbConfigured = !!(
+    process.env.DB_HOST &&
+    process.env.DB_USER &&
+    process.env.DB_PASSWORD &&
+    process.env.DB_NAME
+  );
+
+  let pwStatus = 'not_configured';
+
+  if (dbConfigured) {
+    let sql = null;
+    try { sql = require('mssql'); } catch { /* mssql not installed */ }
+
+    if (!sql) {
+      pwStatus = 'disconnected';
+    } else {
+      let pool;
+      try {
+        pool = await sql.connect({
+          server:   process.env.DB_HOST,
+          port:     parseInt(process.env.DB_PORT || '1433', 10),
+          user:     process.env.DB_USER,
+          password: process.env.DB_PASSWORD,
+          database: process.env.DB_NAME,
+          options: {
+            encrypt:                true,
+            trustServerCertificate: process.env.DB_TRUST_CERT === 'true',
+            connectTimeout:         5000,
+            requestTimeout:         5000,
+          },
+        });
+        await pool.request().query('SELECT 1');
+        pwStatus = 'connected';
+      } catch {
+        pwStatus = 'disconnected';
+      } finally {
+        if (pool) pool.close().catch(() => {});
+      }
+    }
+  }
+
+  const pwActionLabel = pwStatus === 'connected'
+    ? 'View'
+    : pwStatus === 'disconnected'
+      ? 'Reconnect'
+      : 'Configure';
+
+  res.json({
+    checkedAt,
+    integrations: [
+      {
+        id:          'projectworks_reporting',
+        label:       'Projectworks Reporting Data',
+        status:      pwStatus,
+        description: 'Used for schema-aware reporting and live data lookup.',
+        capabilities: {
+          readSchema:   pwStatus === 'connected',
+          runSql:       false,
+          writeActions: false,
+        },
+        lastCheckedAt: checkedAt,
+        actionLabel:   pwActionLabel,
+      },
+      {
+        id:          'projectworks_actions',
+        label:       'Projectworks Actions',
+        status:      'coming_soon',
+        description: 'Will allow approved create/update actions in Projectworks.',
+        capabilities: { writeActions: false },
+        lastCheckedAt: null,
+        actionLabel:   'Coming soon',
+      },
+      {
+        id:          'metabase',
+        label:       'Metabase',
+        status:      'coming_soon',
+        description: 'Will support publishing reports directly to Metabase.',
+        capabilities: { publishQuestions: false, publishDashboards: false },
+        lastCheckedAt: null,
+        actionLabel:   'Coming soon',
+      },
+    ],
+  });
+});
+
 /* ── GET /api/auth/me · PATCH /api/preferences ─────── */
 // FUTURE: merge preferredRevenueMethod + explanationStyle into AI prompt / memory layer.
 
 app.get('/api/auth/me', authHandlers.handleGetMe);
 app.patch('/api/preferences', authHandlers.handlePatchPreferences);
+
+/* ── PATCH /api/auth/password ──────────────────────── */
+// Changes the authenticated user's password after verifying the current one.
+// Never exposes raw errors, hashes, or user details.
+
+app.patch('/api/auth/password', async (req, res) => {
+  if (!req.authUser) return res.status(401).json({ error: "We couldn't verify your session. Please sign in again." });
+  const { currentPassword, newPassword, confirmPassword } = req.body;
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    return res.status(400).json({ error: 'All fields are required.' });
+  }
+  if (typeof newPassword !== 'string' || newPassword.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+  }
+  if (newPassword !== confirmPassword) {
+    return res.status(400).json({ error: 'New passwords do not match.' });
+  }
+  try {
+    const user = await userRepo.findById(req.authUser.id);
+    if (!user) return res.status(404).json({ error: 'Account not found.' });
+    const match = await verifyPassword(currentPassword, user.passwordHash);
+    if (!match) return res.status(400).json({ error: 'Current password is incorrect.' });
+    const newHash = await hashPassword(newPassword);
+    await userRepo.updatePasswordHash(req.authUser.id, newHash);
+    return res.json({ ok: true });
+  } catch {
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+});
 
 /* ── GET /api/memory · PATCH /api/memory · DELETE /api/memory ─ */
 // Per-user memory: facts the AI should remember across conversations.
@@ -566,7 +687,7 @@ app.post('/api/title', async (req, res) => {
         temperature: 0,
         messages: [{
           role: 'user',
-          content: `Generate a concise report title (3–5 words, title case, no punctuation) for this reporting request: "${String(message || '').slice(0, 2000)}". Reply with ONLY the title — no explanation, no quotes.`,
+          content: `Generate a 3–6 word sidebar title (title case, no punctuation) for this conversation message. Rules: noun-first, scannable, reflects the specific data or topic asked about. Good examples: "Revenue by Client YTD", "Utilisation Report Q2", "Projects Over Budget", "Team Capacity Next Month", "Uninvoiced WIP by Project", "Burn Rate This Quarter". Never use generic words like New, Chat, Report, or Query on their own. Message: "${String(message || '').slice(0, 2000)}". Reply with ONLY the title — no explanation, no quotes.`,
         }],
       },
       ANTHROPIC_API_KEY,
@@ -583,5 +704,5 @@ app.post('/api/title', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`\nPW Report Builder → http://localhost:${PORT}\n`);
+  console.log(`\nai-assistant-nameless → http://localhost:${PORT}\n`);
 });

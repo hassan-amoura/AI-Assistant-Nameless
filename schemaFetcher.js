@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────
 // SCHEMA FETCHER — Live database schema discovery
 //
-// This is the single most important upgrade path for PW Report Builder.
+// This is the single most important upgrade path for ai-assistant-nameless.
 //
 // Right now the schema in CLAUDE.md is maintained by hand. Every time a
 // reporting view is added, renamed, or gets a new column, CLAUDE.md needs
@@ -77,7 +77,7 @@ async function fetchLiveSchema() {
           ON  t.TABLE_SCHEMA = c.TABLE_SCHEMA
           AND t.TABLE_NAME   = c.TABLE_NAME
       WHERE t.TABLE_SCHEMA = 'reporting'
-        AND t.TABLE_TYPE   = 'BASE TABLE'
+        AND t.TABLE_TYPE   IN ('BASE TABLE', 'VIEW')
       ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION
     `);
 

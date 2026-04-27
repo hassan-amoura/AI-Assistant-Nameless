@@ -9,6 +9,8 @@ const PREF_DEFAULTS = {
   preferredRevenueMethod: null,
   explanationStyle: null,
   nativeReportsFirst: false,
+  name: null,
+  displayName: null,
 };
 
 const ALLOWED_REVENUE_METHODS = new Set([
@@ -81,6 +83,14 @@ function createPreferencesService(store) {
             throw err;
           }
           if (typeof v === 'boolean') next.nativeReportsFirst = v;
+        }
+        if ('name' in patch) {
+          const v = patch.name;
+          next.name = (v === null || v === undefined) ? null : String(v).slice(0, 100);
+        }
+        if ('displayName' in patch) {
+          const v = patch.displayName;
+          next.displayName = (v === null || v === undefined) ? null : String(v).slice(0, 100);
         }
 
         doc.preferences[userId] = next;

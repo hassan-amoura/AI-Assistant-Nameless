@@ -31,6 +31,8 @@ function rowToPrefs(row) {
     nativeReportsFirst: row && typeof row.native_reports_first === 'boolean'
       ? row.native_reports_first
       : PREF_DEFAULTS.nativeReportsFirst,
+    name: null,
+    displayName: null,
   };
 }
 
@@ -64,6 +66,8 @@ function validatePatch(patch) {
       throw err;
     }
   }
+  // name and displayName are accepted but not persisted in the Postgres column;
+  // they are gracefully ignored here so the file-store path works without errors.
 }
 
 /** @param {import('pg').Pool} pool */
@@ -104,6 +108,15 @@ function createPgPreferencesService(pool) {
       }
       if ('nativeReportsFirst' in patch && typeof patch.nativeReportsFirst === 'boolean') {
         next.nativeReportsFirst = patch.nativeReportsFirst;
+      }
+      // name and displayName are not persisted to DB — handled by file-store path only.
+      if ('name' in patch) {
+        const v = patch.name;
+        next.name = (v === null || v === undefined) ? null : String(v).slice(0, 100);
+      }
+      if ('displayName' in patch) {
+        const v = patch.displayName;
+        next.displayName = (v === null || v === undefined) ? null : String(v).slice(0, 100);
       }
 
       await pool.query(

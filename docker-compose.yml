@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: pw-report-builder-pg
+    container_name: ai-assistant-nameless-pg
     restart: unless-stopped
     environment:
       POSTGRES_DB: pw_report_builder

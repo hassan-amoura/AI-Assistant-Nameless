@@ -1,5 +1,5 @@
 {
-  "name": "pw-report-builder",
+  "name": "ai-assistant-nameless",
   "version": "1.0.0",
   "description": "Projectworks SQL report builder — AI-powered T-SQL for Metabase",
   "main": "server.js",
