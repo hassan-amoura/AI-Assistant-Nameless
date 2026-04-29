@@ -857,111 +857,6 @@ async function insightReviewInChat(insightId) {
   saveConversations();
 }
 
-/* ── Empty state — dynamic suggestion chips ──────────── */
-
-const _STATIC_TOP_CHIP_DEFAULTS = [
-  'Which projects are tracking over budget this month?',
-  'Show me uninvoiced WIP by client',
-];
-const _SEVERITY_RANK = { high: 0, medium: 1, low: 2, positive: 3 };
-const _GHOST_LINE_TEXT = "Based on what's happening in your projects";
-
-let _ghostInputListenerAttached = false;
-function _attachGhostInputListener() {
-  if (_ghostInputListenerAttached || !inputEl) return;
-  _ghostInputListenerAttached = true;
-  inputEl.addEventListener('input', () => {
-    const ghost = document.getElementById('quick-start-ghost-line');
-    if (!ghost) return;
-    if (inputEl.value.length > 0) ghost.classList.add('quick-start-ghost-line--fade');
-    else                          ghost.classList.remove('quick-start-ghost-line--fade');
-  });
-}
-
-function _onDynamicChipClick(chipEl) {
-  const q = chipEl.dataset.q;
-  const insightId = chipEl.dataset.insightId;
-  if (insightId) {
-    fetch(`/api/insights/${encodeURIComponent(insightId)}/read`, { method: 'POST' }).catch(() => {});
-  }
-  if (q) submitChip(q);
-}
-
-function _onStaticChipClick(chipEl) {
-  if (chipEl.dataset.q) submitChip(chipEl.dataset.q);
-}
-
-async function populateEmptyStateChips() {
-  const wrap = document.getElementById('quick-start-suggestions');
-  if (!wrap) return;
-  const chips = wrap.querySelectorAll('.suggestion-pill');
-  if (chips.length < 2) return;
-
-  let unread = [];
-  try {
-    const resp = await fetch('/api/insights');
-    if (resp.ok) {
-      const data = await resp.json();
-      unread = (data.insights || []).filter(i => !i.read && !i.dismissed);
-    }
-  } catch (_) { /* fall back to static defaults */ }
-
-  unread.sort((a, b) => (_SEVERITY_RANK[a.severity] ?? 9) - (_SEVERITY_RANK[b.severity] ?? 9));
-  const topInsights = unread.slice(0, 2);
-
-  for (let i = 0; i < 2; i++) {
-    const chip = chips[i];
-    const insight = topInsights[i];
-    // Reset any styling left over from a previous render.
-    chip.style.borderLeft = '';
-    chip.textContent = '';
-    if (insight) {
-      const label = insight.action || insight.title;
-      chip.dataset.q = label;
-      chip.dataset.insightId = insight.id;
-      // ✦ icon as a child element so chip text stays text-only.
-      const icon = document.createElement('span');
-      icon.className = 'suggestion-pill__icon';
-      icon.setAttribute('aria-hidden', 'true');
-      icon.textContent = '✦';
-      chip.appendChild(icon);
-      chip.appendChild(document.createTextNode(label));
-      if (!chip.classList.contains('suggestion-pill--dynamic')) {
-        chip.classList.add('suggestion-pill--dynamic');
-      }
-      chip.onclick = function () { _onDynamicChipClick(this); };
-    } else {
-      chip.dataset.q = _STATIC_TOP_CHIP_DEFAULTS[i];
-      chip.textContent = _STATIC_TOP_CHIP_DEFAULTS[i];
-      delete chip.dataset.insightId;
-      chip.classList.remove('suggestion-pill--dynamic');
-      chip.onclick = function () { _onStaticChipClick(this); };
-    }
-  }
-
-  // Ghost line — visible only while at least one dynamic chip exists.
-  // Inserted as a sibling preceding #quick-start-suggestions so it shares the
-  // welcome-state hide rule (see styles.css).
-  const showGhost = topInsights.length > 0;
-  let ghost = document.getElementById('quick-start-ghost-line');
-  if (showGhost) {
-    if (!ghost) {
-      ghost = document.createElement('div');
-      ghost.id = 'quick-start-ghost-line';
-      ghost.className = 'quick-start-ghost-line';
-      ghost.textContent = _GHOST_LINE_TEXT;
-      wrap.parentNode.insertBefore(ghost, wrap);
-    }
-    // (Re-)show; clear any prior fade-on-typing state since we're back to a fresh empty state.
-    ghost.style.display = '';
-    ghost.classList.remove('quick-start-ghost-line--fade');
-    if (inputEl && inputEl.value.length > 0) ghost.classList.add('quick-start-ghost-line--fade');
-    _attachGhostInputListener();
-  } else if (ghost) {
-    ghost.style.display = 'none';
-  }
-}
-
 /* ── Sidebar drag interactions ──────────────────────── */
 
 const _drag = {
@@ -1245,7 +1140,6 @@ function newReport() {
   inputEl.style.height = 'auto';
   sendBtn.disabled = true;
   inputEl.focus();
-  populateEmptyStateChips();
   maybeShowGoalPrompt();
 }
 
@@ -3397,7 +3291,6 @@ document.addEventListener('click', () => _closeAllInsightDropdowns());
   loadConversations();
   initSidebar();
   loadGreeting();
-  populateEmptyStateChips();
   maybeShowGoalPrompt();
 })();
 

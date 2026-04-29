@@ -934,53 +934,8 @@ html, body {
   padding-bottom: 20px;
 }
 
-.chat-col:not(.chat-col--empty) .quick-start-suggestions,
-.chat-col:not(.chat-col--empty) .quick-start-ghost-line {
+.chat-col:not(.chat-col--empty) .quick-start-suggestions {
   display: none;
-}
-
-/* ── Empty-state ghost line ───────────────────────────── */
-.quick-start-ghost-line {
-  font-family: var(--font-sans);
-  font-size: 11px;
-  font-weight: 400;
-  color: #B9BDC1;
-  text-align: center;
-  margin: 14px auto 0;
-  padding: 0 8px;
-  transition: opacity 200ms ease-out;
-  opacity: 1;
-}
-.quick-start-ghost-line--fade {
-  opacity: 0;
-  pointer-events: none;
-}
-.quick-start-ghost-line + .quick-start-suggestions {
-  margin-top: 8px;
-}
-
-/* ── Dynamic suggestion chip (top 2 from unread insights) ──────────────── */
-@keyframes pwInsightChipFadeIn {
-  from { opacity: 0; transform: translateY(2px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-.suggestion-pill--dynamic {
-  background: rgba(191, 255, 0, 0.08);
-  border-color: transparent;
-  animation: pwInsightChipFadeIn 150ms ease-out both;
-}
-.suggestion-pill--dynamic:hover {
-  background: rgba(191, 255, 0, 0.16);
-  border-color: transparent;
-  color: #11212D;
-  transform: translateY(-1px);
-}
-.suggestion-pill__icon {
-  display: inline-block;
-  font-size: 10px;
-  color: #4A5C6A;
-  margin-right: 5px;
-  line-height: 1;
 }
 
 .input-wrap {
