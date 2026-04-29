@@ -113,7 +113,9 @@ function createHttpAuthHandlers(deps) {
     } catch (e) {
       const code = e && e.code;
       if (code === 'INVALID_REVENUE_METHOD' || code === 'INVALID_EXPLANATION_STYLE'
-        || code === 'INVALID_NATIVE_REPORTS_FIRST' || code === 'INVALID_PATCH') {
+        || code === 'INVALID_NATIVE_REPORTS_FIRST' || code === 'INVALID_AUTONOMY_LEVEL'
+        || code === 'INVALID_COACHING_STYLE' || code === 'INVALID_FIRM_GOAL'
+        || code === 'INVALID_PATCH') {
         return res.status(400).json({ error: 'Invalid preference value' });
       }
       return res.status(500).json({ error: 'Could not save preferences' });

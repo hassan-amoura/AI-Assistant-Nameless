@@ -84,6 +84,10 @@ const { buildChatSystemForRequest } = require('./server/lib/buildChatSystem');
 const { anthropicMessagesWithRetry, buildSystemWithCache } = require('./server/lib/anthropicClient');
 const { rateLimitHit } = require('./server/lib/rateLimit');
 const { getWorkspaceKnowledge, addWorkspaceKnowledge } = require('./server/lib/knowledgeStore');
+const { generateInsights } = require('./server/lib/methodology/insightGenerator');
+const { getMockTenantData } = require('./server/lib/methodology/mockTenantData');
+const { assessMaturity } = require('./server/lib/methodology/maturityAssessor');
+const insightsStore = require('./server/lib/methodology/insightsStore');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -719,6 +723,53 @@ app.post('/api/title', async (req, res) => {
 
   const data = await upstream.json().catch(() => ({}));
   res.json({ title: data.content?.[0]?.text?.trim() || null });
+});
+
+/* ── GET /api/insights ──────────────────────────────── */
+
+app.get('/api/insights', async (req, res) => {
+  if (!req.authUser) return res.status(401).json({ error: "We couldn't verify your session. Please sign in again." });
+  const userId = req.authUser.id;
+  const userRole = 'project_manager';
+  const tenantData = getMockTenantData(userId, userRole);
+  // Apply user's saved coaching style and firm goal preferences (override mock defaults).
+  try {
+    const prefs = await preferencesService.getForUserId(userId);
+    if (prefs && prefs.coachingStyle) tenantData.coachingStyle = prefs.coachingStyle;
+    if (prefs && prefs.firmGoal)      tenantData.firmGoal      = prefs.firmGoal;
+  } catch (_) { /* fall back to mock default */ }
+  const maturity = assessMaturity(tenantData);
+  const fresh = generateInsights(userId, userRole, tenantData, maturity);
+  for (const insight of fresh) {
+    insightsStore.addInsight(userId, insight);
+  }
+  const stored = insightsStore.getInsights(userId);
+  const unreadCount = stored.filter(i => !i.read).length;
+  return res.json({ insights: stored, maturity, unreadCount });
+});
+
+/* ── POST /api/insights/:id/read ────────────────────── */
+
+app.post('/api/insights/:id/read', async (req, res) => {
+  if (!req.authUser) return res.status(401).json({ error: "We couldn't verify your session. Please sign in again." });
+  insightsStore.markRead(req.authUser.id, req.params.id);
+  return res.json({ success: true });
+});
+
+/* ── POST /api/insights/read-all ────────────────────── */
+
+app.post('/api/insights/read-all', async (req, res) => {
+  if (!req.authUser) return res.status(401).json({ error: "We couldn't verify your session. Please sign in again." });
+  insightsStore.markAllRead(req.authUser.id);
+  return res.json({ success: true });
+});
+
+/* ── POST /api/insights/:id/dismiss ─────────────────── */
+
+app.post('/api/insights/:id/dismiss', async (req, res) => {
+  if (!req.authUser) return res.status(401).json({ error: "We couldn't verify your session. Please sign in again." });
+  insightsStore.dismissInsight(req.authUser.id, req.params.id);
+  return res.json({ success: true });
 });
 
 app.listen(PORT, () => {

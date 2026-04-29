@@ -88,8 +88,14 @@ function userKey(base) {
   return pwCurrentUser ? `${base}:${pwCurrentUser.id}` : base;
 }
 
-/** Main workspace: chat, library list, or saved-report detail (not modal). */
+/** Main workspace: chat, library list, saved-report detail, or assistant feed. */
 let appView = 'chat';
+
+/** Unread insight count — drives the assistant channel badge. */
+let _assistantUnreadCount = 0;
+
+/** Insight objects from the last feed load — needed by drawer/dropdown functions. */
+let _currentFeedInsights = [];
 
 /** Full library row while viewing report detail; cleared when leaving detail. */
 let detailLibraryEntry = null;
@@ -123,15 +129,27 @@ function renderSidebar() {
   renderConversationList(conversations, true);
 }
 
+function _assistantChannelItemHTML() {
+  const badge = _assistantUnreadCount > 0
+    ? `<span class="assistant-badge">${_assistantUnreadCount}</span>`
+    : '';
+  return `<div id="assistant-channel-item" class="assistant-channel-item" onclick="openAssistantFeed()" role="button" tabindex="0">
+    <svg class="assistant-channel-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>
+    <span class="assistant-channel-label">Your Assistant</span>
+    ${badge}
+  </div>`;
+}
+
 function renderConversationList(convs, showSections = false) {
+  const assistantItem = _assistantChannelItemHTML();
   if (!showSections) {
-    convList.innerHTML = convs.length ? convs.map(c => buildConvItemHTML(c)).join('') : '';
+    convList.innerHTML = assistantItem + (convs.length ? convs.map(c => buildConvItemHTML(c)).join('') : '');
     return;
   }
 
   const pinned  = convs.filter(c => c.pinned);
   const recents = convs.filter(c => !c.pinned);
-  let html = '';
+  let html = assistantItem;
 
   // Pinned section — always rendered
   html += `<div class="conv-section-label">Pinned</div>`;
@@ -481,6 +499,467 @@ function initSidebar() {
   }
   updateSidebarNavLabels();
   initDragBehavior();
+  updateAssistantBadge();
+}
+
+/* ── Your Assistant channel ──────────────────────────── */
+
+function _getOrCreateAssistantFeedEl() {
+  let el = document.getElementById('assistant-feed-mode');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'assistant-feed-mode';
+    el.className = 'assistant-feed-mode';
+    el.style.display = 'none';
+    const sibling = document.getElementById('library-mode');
+    if (sibling && sibling.parentNode) {
+      sibling.parentNode.insertBefore(el, sibling.nextSibling);
+    } else {
+      document.body.appendChild(el);
+    }
+  }
+  return el;
+}
+
+async function updateAssistantBadge() {
+  try {
+    const resp = await fetch('/api/insights');
+    if (!resp.ok) return;
+    const { unreadCount } = await resp.json();
+    _assistantUnreadCount = unreadCount || 0;
+    renderSidebar();
+  } catch (_) {}
+}
+
+function openAssistantFeed() {
+  if (appView === 'report-detail') {
+    leaveReportDetailShell();
+    exitLibraryLayoutToChat();
+  } else if (appView === 'library') {
+    exitLibraryLayoutToChat();
+  } else if (appView === 'settings') {
+    const page = document.getElementById('settings-page');
+    if (page) page.style.display = 'none';
+    const chatCol = document.getElementById('chat-col');
+    if (chatCol) chatCol.style.display = '';
+    sqlPanel.style.display = '';
+  }
+  appView = 'assistant';
+  const chatCol = document.getElementById('chat-col');
+  if (chatCol) {
+    chatCol.classList.add('main-fade-out');
+    chatCol.offsetHeight;
+    setTimeout(() => {
+      chatCol.style.display = 'none';
+      chatCol.classList.remove('main-fade-out');
+    }, 220);
+  }
+  sqlPanel.classList.remove('open');
+  sqlPanel.style.display = 'none';
+  renderAssistantFeed();
+  updateSidebarNavLabels();
+}
+
+function exitAssistantFeedToChat() {
+  const feedEl = _getOrCreateAssistantFeedEl();
+  feedEl.style.display = 'none';
+  const chatCol = document.getElementById('chat-col');
+  if (chatCol) {
+    chatCol.style.display = '';
+    chatCol.classList.add('main-fade-out');
+    chatCol.offsetHeight;
+    requestAnimationFrame(() => chatCol.classList.remove('main-fade-out'));
+  }
+  sqlPanel.style.display = '';
+}
+
+async function renderAssistantFeed() {
+  const feedEl = _getOrCreateAssistantFeedEl();
+  feedEl.style.display = 'flex';
+  feedEl.innerHTML = '<div class="assistant-feed-loading">Loading…</div>';
+
+  let insights = [], maturity = null;
+  try {
+    const resp = await fetch('/api/insights');
+    if (resp.ok) {
+      const data = await resp.json();
+      insights = data.insights || [];
+      maturity = data.maturity || null;
+      _assistantUnreadCount = data.unreadCount || 0;
+      renderSidebar();
+    }
+  } catch (_) {}
+
+  _currentFeedInsights = insights;
+
+  const opsLabel = maturity ? `L${maturity.ops.level} ${maturity.ops.levelName}` : '';
+  const growthLabel = maturity ? `L${maturity.growth.level} ${maturity.growth.levelName}` : '';
+  const subtitle = maturity
+    ? `Meridian Consulting · ${opsLabel} Operations · ${growthLabel} Growth`
+    : 'Meridian Consulting';
+
+  const visibleInsights = insights.filter(i => !i.dismissed);
+
+  const severityBorder = { high: '#E53E3E', medium: '#F5A623', low: '#4A90D9', positive: '#18B96E' };
+
+  const autonomy = _getAutonomyLevel();
+  const isFinancialInsight = i => i.metric === 'overdueInvoices' || i.metric === 'outstandingWIP';
+
+  const cardsHTML = visibleInsights.length
+    ? visibleInsights.map(i => {
+        const border = severityBorder[i.severity] || '#4A90D9';
+        const unreadClass = !i.read ? ' insight-card--unread' : '';
+        const iid = escapeAttr(i.id);
+        const actionText = escapeAttr(i.action || '');
+        const financial = isFinancialInsight(i);
+        // Decision-unit fields with safe fallbacks to legacy fields.
+        const cardTitle  = escapeHTML(i.situationTitle || i.title || '');
+        const cardBridge = escapeHTML(i.decisionBridge || i.body || '');
+
+        let actionBtn;
+        if (autonomy === 'notify') {
+          actionBtn = `<button class="insight-card-action" onclick="insightActionToChat('${iid}','${actionText}')">Discuss in Chat</button>`;
+        } else if (autonomy === 'auto' && !financial) {
+          actionBtn = `
+            <div class="insight-auto-row">
+              <span class="insight-auto-badge">Auto-applying…</span>
+              <button class="insight-auto-undo" onclick="insightActionToChat('${iid}','${actionText}')">Undo</button>
+            </div>`;
+          console.log('[AutoApply] would auto-apply insight:', i.id, i.title);
+        } else {
+          const usesDrawer = _insightUsesDrawer(i);
+          const primaryLabel = escapeHTML(_getInsightPrimaryLabel(i));
+          actionBtn = `
+            <div class="insight-split-btn">
+              <button class="insight-split-primary" onclick="handleInsightPrimaryAction('${iid}','${actionText}',${usesDrawer})">${primaryLabel}</button>
+              <button class="insight-split-chevron" onclick="toggleInsightDropdown('${iid}',event)" aria-label="More options" aria-haspopup="true">
+                <svg width="10" height="6" viewBox="0 0 10 6" fill="none" aria-hidden="true"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <div class="insight-split-dropdown" id="insight-dropdown-${iid}" role="menu">
+                ${_renderInsightDropdownItems(i, iid)}
+              </div>
+            </div>`;
+        }
+        return `
+          <div class="insight-card${unreadClass}" data-insight-id="${iid}" style="border-left-color:${border}">
+            <button class="insight-card-dismiss" onclick="dismissInsightCard('${iid}')" title="Dismiss" aria-label="Dismiss insight">×</button>
+            <div class="insight-card-title">${cardTitle}</div>
+            <div class="insight-card-bridge">${cardBridge}</div>
+            ${actionBtn}
+          </div>`;
+      }).join('')
+    : `<div class="assistant-feed-empty">You're all caught up. Check back tomorrow for your next briefing.</div>`;
+
+  feedEl.innerHTML = `
+    <div class="assistant-feed-inner">
+      <div class="assistant-feed-header">
+        <div class="assistant-feed-header-left">
+          <div class="assistant-feed-title">Your Assistant</div>
+          <div class="assistant-feed-subtitle">${escapeHTML(subtitle)}</div>
+        </div>
+        <button class="assistant-feed-mark-all" onclick="markAllInsightsRead()">Mark all read</button>
+      </div>
+      <div class="assistant-feed-cards">${cardsHTML}</div>
+    </div>`;
+}
+
+async function dismissInsightCard(insightId) {
+  try { await fetch(`/api/insights/${encodeURIComponent(insightId)}/dismiss`, { method: 'POST' }); } catch (_) {}
+  await renderAssistantFeed();
+}
+
+async function markAllInsightsRead() {
+  try { await fetch('/api/insights/read-all', { method: 'POST' }); } catch (_) {}
+  _assistantUnreadCount = 0;
+  renderSidebar();
+  await renderAssistantFeed();
+}
+
+async function insightActionToChat(insightId, actionText) {
+  try { await fetch(`/api/insights/${encodeURIComponent(insightId)}/read`, { method: 'POST' }); } catch (_) {}
+  newReport();
+  if (actionText && inputEl) {
+    inputEl.value = actionText;
+    onInput(inputEl);
+    inputEl.focus();
+  }
+}
+
+/* ── Action Drawer + split button ────────────────────── */
+
+function _getInsightPrimaryLabel(insight) {
+  if (insight.primaryAction) return insight.primaryAction;
+  // Legacy fallbacks for any insight without the decision-unit fields.
+  if (insight.type === 'missing_behavior') return 'Submit timesheets';
+  if (insight.type === 'at_risk' && insight.metric === 'projectMargin') return 'Apply Changes';
+  if (insight.type === 'at_risk' && insight.metric === 'overdueInvoices') return 'Send reminder';
+  return insight.action || 'Ask about this';
+}
+
+// Renders the dropdown items from insight.secondaryOptions. Falls back to the
+// minimum pair (Review in Chat / Dismiss) when the field is missing.
+function _renderInsightDropdownItems(insight, iid) {
+  const opts = Array.isArray(insight.secondaryOptions) && insight.secondaryOptions.length
+    ? insight.secondaryOptions
+    : ['Review in Chat', 'Dismiss'];
+  return opts.map(opt => {
+    if (opt === 'Review in Chat') {
+      return `<button class="insight-split-dropdown-item" role="menuitem" onclick="insightReviewInChat('${iid}')">Review in Chat</button>`;
+    }
+    if (opt === 'Dismiss') {
+      return `<button class="insight-split-dropdown-item" role="menuitem" onclick="dismissInsightCard('${iid}')">Dismiss</button>`;
+    }
+    // Custom option — route to a new chat with the option text as the user message.
+    const escOpt = escapeAttr(opt);
+    return `<button class="insight-split-dropdown-item" role="menuitem" onclick="insightActionToChat('${iid}','${escOpt}')">${escapeHTML(opt)}</button>`;
+  }).join('');
+}
+
+function _insightUsesDrawer(insight) {
+  if (insight.type === 'missing_behavior') return true;
+  if (insight.type === 'at_risk' && insight.metric === 'projectMargin') return true;
+  if (insight.type === 'at_risk' && insight.metric === 'overdueInvoices') return true;
+  return false;
+}
+
+function _getDrawerItems(insight) {
+  if (insight.type === 'missing_behavior' && insight.metric === 'timesheetCompletionRate') {
+    return [
+      { what: 'Submit timesheet for James Wu',  detail: 'Apollo Data Platform / Development · 40hrs · Mon–Fri' },
+      { what: 'Submit timesheet for Tom Lawson', detail: 'Genesis CRM / Workshops · 30hrs · Mon–Fri' },
+    ];
+  }
+  if (insight.type === 'at_risk' && insight.metric === 'projectMargin') {
+    return [
+      { what: 'Flag Nebula Cloud Migration as at-risk', detail: 'Notify PM of budget overrun' },
+      { what: 'Generate budget overrun report',         detail: 'For PM review' },
+    ];
+  }
+  if (insight.type === 'at_risk' && insight.metric === 'overdueInvoices') {
+    const client = insight.title.replace('Overdue invoice — ', '');
+    return [
+      { what: `Send payment reminder to ${client}`, detail: insight.body.replace(/\.$/, '') },
+    ];
+  }
+  return [];
+}
+
+function _closeAllInsightDropdowns() {
+  document.querySelectorAll('.insight-split-dropdown--open').forEach(el => {
+    el.classList.remove('insight-split-dropdown--open');
+  });
+}
+
+function toggleInsightDropdown(insightId, event) {
+  event.stopPropagation();
+  const dropdown = document.getElementById(`insight-dropdown-${insightId}`);
+  if (!dropdown) return;
+  const isOpen = dropdown.classList.contains('insight-split-dropdown--open');
+  _closeAllInsightDropdowns();
+  if (!isOpen) dropdown.classList.add('insight-split-dropdown--open');
+}
+
+function handleInsightPrimaryAction(insightId, actionText, usesDrawer) {
+  _closeAllInsightDropdowns();
+  if (usesDrawer) {
+    openInsightActionDrawer(insightId);
+  } else {
+    insightActionToChat(insightId, actionText);
+  }
+}
+
+function openInsightActionDrawer(insightId) {
+  // Close any open drawers first
+  document.querySelectorAll('.insight-drawer').forEach(el => {
+    el.classList.remove('insight-drawer--open');
+    el.remove();
+  });
+
+  const insight = _currentFeedInsights.find(i => i.id === insightId);
+  if (!insight) return;
+  const items = _getDrawerItems(insight);
+  if (!items.length) return;
+
+  const itemsHTML = items.map((item, idx) => `
+    <label class="insight-drawer-item">
+      <input type="checkbox" class="insight-drawer-checkbox" data-item-idx="${idx}" checked>
+      <div class="insight-drawer-item-text">
+        <span class="insight-drawer-item-what">${escapeHTML(item.what)}</span>
+        <span class="insight-drawer-item-detail">${escapeHTML(item.detail)}</span>
+      </div>
+    </label>`).join('');
+
+  const drawer = document.createElement('div');
+  drawer.className = 'insight-drawer';
+  drawer.id = `insight-drawer-${insightId}`;
+  drawer.innerHTML = `
+    <div class="insight-drawer-header">
+      <div class="insight-drawer-title">${escapeHTML(insight.title)}</div>
+      <div class="insight-drawer-label">Proposed changes</div>
+    </div>
+    <div class="insight-drawer-items">${itemsHTML}</div>
+    <div class="insight-drawer-footer">
+      <button class="insight-drawer-apply" onclick="applySelectedDrawerItems('${escapeAttr(insightId)}')">Apply selected</button>
+      <button class="insight-drawer-cancel" onclick="closeInsightActionDrawer('${escapeAttr(insightId)}')">Cancel</button>
+    </div>`;
+
+  const cardEl = document.querySelector(`.insight-card[data-insight-id="${insightId}"]`);
+  if (!cardEl) return;
+  cardEl.parentNode.insertBefore(drawer, cardEl.nextSibling);
+  // Tick to allow display:block to apply before adding transition class
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => drawer.classList.add('insight-drawer--open'));
+  });
+
+  fetch(`/api/insights/${encodeURIComponent(insightId)}/read`, { method: 'POST' }).catch(() => {});
+}
+
+function closeInsightActionDrawer(insightId) {
+  const drawer = document.getElementById(`insight-drawer-${insightId}`);
+  if (!drawer) return;
+  drawer.classList.remove('insight-drawer--open');
+  drawer.addEventListener('transitionend', () => drawer.remove(), { once: true });
+}
+
+function applySelectedDrawerItems(insightId) {
+  const drawer = document.getElementById(`insight-drawer-${insightId}`);
+  if (!drawer) return;
+  const insight = _currentFeedInsights.find(i => i.id === insightId);
+  const items = insight ? _getDrawerItems(insight) : [];
+  const selected = Array.from(drawer.querySelectorAll('.insight-drawer-checkbox:checked'))
+    .map(cb => items[parseInt(cb.dataset.itemIdx, 10)])
+    .filter(Boolean);
+  console.log('[ActionDrawer] applying selected changes:', selected);
+  closeInsightActionDrawer(insightId);
+}
+
+async function insightReviewInChat(insightId) {
+  _closeAllInsightDropdowns();
+  const insight = _currentFeedInsights.find(i => i.id === insightId);
+  if (!insight) return;
+  try { await fetch(`/api/insights/${encodeURIComponent(insightId)}/read`, { method: 'POST' }); } catch (_) {}
+  const openingMsg = `${insight.title} — ${insight.body} What would you like to change before we apply this?`;
+  const id = Date.now();
+  conversations.unshift({
+    id,
+    title: insight.title,
+    messages: [{ role: 'assistant', content: openingMsg }],
+    sql: null,
+    savedReport: null,
+    reportLibrarySaved: false,
+  });
+  activeId = id;
+  exitAssistantFeedToChat();
+  appView = 'chat';
+  renderSidebar();
+  renderMessages();
+  syncChatLayoutState();
+  saveConversations();
+}
+
+/* ── Empty state — dynamic suggestion chips ──────────── */
+
+const _STATIC_TOP_CHIP_DEFAULTS = [
+  'Which projects are tracking over budget this month?',
+  'Show me uninvoiced WIP by client',
+];
+const _SEVERITY_RANK = { high: 0, medium: 1, low: 2, positive: 3 };
+const _GHOST_LINE_TEXT = "Based on what's happening in your projects";
+
+let _ghostInputListenerAttached = false;
+function _attachGhostInputListener() {
+  if (_ghostInputListenerAttached || !inputEl) return;
+  _ghostInputListenerAttached = true;
+  inputEl.addEventListener('input', () => {
+    const ghost = document.getElementById('quick-start-ghost-line');
+    if (!ghost) return;
+    if (inputEl.value.length > 0) ghost.classList.add('quick-start-ghost-line--fade');
+    else                          ghost.classList.remove('quick-start-ghost-line--fade');
+  });
+}
+
+function _onDynamicChipClick(chipEl) {
+  const q = chipEl.dataset.q;
+  const insightId = chipEl.dataset.insightId;
+  if (insightId) {
+    fetch(`/api/insights/${encodeURIComponent(insightId)}/read`, { method: 'POST' }).catch(() => {});
+  }
+  if (q) submitChip(q);
+}
+
+function _onStaticChipClick(chipEl) {
+  if (chipEl.dataset.q) submitChip(chipEl.dataset.q);
+}
+
+async function populateEmptyStateChips() {
+  const wrap = document.getElementById('quick-start-suggestions');
+  if (!wrap) return;
+  const chips = wrap.querySelectorAll('.suggestion-pill');
+  if (chips.length < 2) return;
+
+  let unread = [];
+  try {
+    const resp = await fetch('/api/insights');
+    if (resp.ok) {
+      const data = await resp.json();
+      unread = (data.insights || []).filter(i => !i.read && !i.dismissed);
+    }
+  } catch (_) { /* fall back to static defaults */ }
+
+  unread.sort((a, b) => (_SEVERITY_RANK[a.severity] ?? 9) - (_SEVERITY_RANK[b.severity] ?? 9));
+  const topInsights = unread.slice(0, 2);
+
+  for (let i = 0; i < 2; i++) {
+    const chip = chips[i];
+    const insight = topInsights[i];
+    // Reset any styling left over from a previous render.
+    chip.style.borderLeft = '';
+    chip.textContent = '';
+    if (insight) {
+      const label = insight.action || insight.title;
+      chip.dataset.q = label;
+      chip.dataset.insightId = insight.id;
+      // ✦ icon as a child element so chip text stays text-only.
+      const icon = document.createElement('span');
+      icon.className = 'suggestion-pill__icon';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.textContent = '✦';
+      chip.appendChild(icon);
+      chip.appendChild(document.createTextNode(label));
+      if (!chip.classList.contains('suggestion-pill--dynamic')) {
+        chip.classList.add('suggestion-pill--dynamic');
+      }
+      chip.onclick = function () { _onDynamicChipClick(this); };
+    } else {
+      chip.dataset.q = _STATIC_TOP_CHIP_DEFAULTS[i];
+      chip.textContent = _STATIC_TOP_CHIP_DEFAULTS[i];
+      delete chip.dataset.insightId;
+      chip.classList.remove('suggestion-pill--dynamic');
+      chip.onclick = function () { _onStaticChipClick(this); };
+    }
+  }
+
+  // Ghost line — visible only while at least one dynamic chip exists.
+  // Inserted as a sibling preceding #quick-start-suggestions so it shares the
+  // welcome-state hide rule (see styles.css).
+  const showGhost = topInsights.length > 0;
+  let ghost = document.getElementById('quick-start-ghost-line');
+  if (showGhost) {
+    if (!ghost) {
+      ghost = document.createElement('div');
+      ghost.id = 'quick-start-ghost-line';
+      ghost.className = 'quick-start-ghost-line';
+      ghost.textContent = _GHOST_LINE_TEXT;
+      wrap.parentNode.insertBefore(ghost, wrap);
+    }
+    // (Re-)show; clear any prior fade-on-typing state since we're back to a fresh empty state.
+    ghost.style.display = '';
+    ghost.classList.remove('quick-start-ghost-line--fade');
+    if (inputEl && inputEl.value.length > 0) ghost.classList.add('quick-start-ghost-line--fade');
+    _attachGhostInputListener();
+  } else if (ghost) {
+    ghost.style.display = 'none';
+  }
 }
 
 /* ── Sidebar drag interactions ──────────────────────── */
@@ -714,6 +1193,9 @@ function switchTo(id) {
   } else if (appView === 'library') {
     exitLibraryLayoutToChat();
     appView = 'chat';
+  } else if (appView === 'assistant') {
+    exitAssistantFeedToChat();
+    appView = 'chat';
   }
   activeId = id;
   renderSidebar();
@@ -749,6 +1231,8 @@ function newReport() {
     exitLibraryLayoutToChat();
   } else if (appView === 'library') {
     exitLibraryLayoutToChat();
+  } else if (appView === 'assistant') {
+    exitAssistantFeedToChat();
   }
   appView = 'chat';
   activeId = null;
@@ -761,6 +1245,8 @@ function newReport() {
   inputEl.style.height = 'auto';
   sendBtn.disabled = true;
   inputEl.focus();
+  populateEmptyStateChips();
+  maybeShowGoalPrompt();
 }
 
 function submitChip(q) {
@@ -1075,6 +1561,8 @@ function resetShellToFreshChatLayout() {
     detail.classList.remove('rd-visible');
     detail.style.display = 'none';
   }
+  const feed = document.getElementById('assistant-feed-mode');
+  if (feed) feed.style.display = 'none';
   const chatCol = document.getElementById('chat-col');
   if (chatCol) {
     chatCol.style.display = '';
@@ -1585,6 +2073,12 @@ function returnToChatFromSidebar() {
   }
   if (appView === 'library') {
     switchToChat();
+    return;
+  }
+  if (appView === 'assistant') {
+    exitAssistantFeedToChat();
+    appView = 'chat';
+    updateSidebarNavLabels();
   }
 }
 
@@ -2039,33 +2533,6 @@ function sendMessage() {
 
 /* ── SQL Panel ──────────────────────────────────────── */
 
-// Delegated hover tooltip for #btn-copy-panel — must use delegation because the
-// button lives inside a dynamically rendered panel (position is 0,0 at init time).
-let _copyPanelHoverTooltip = null;
-document.body.addEventListener('mouseover', (e) => {
-  const btn = e.target.closest('#btn-copy-panel');
-  if (!btn) return;
-  if (_copyPanelHoverTooltip) return;
-  _copyPanelHoverTooltip = document.createElement('div');
-  _copyPanelHoverTooltip.className = 'copy-tooltip-body';
-  _copyPanelHoverTooltip.textContent = btn.getAttribute('data-tooltip') || 'Copy';
-  document.body.appendChild(_copyPanelHoverTooltip);
-  const rect = btn.getBoundingClientRect();
-  const tw = _copyPanelHoverTooltip.offsetWidth;
-  const th = _copyPanelHoverTooltip.offsetHeight;
-  let top = rect.top - th - 6;
-  let left = rect.left + rect.width / 2 - tw / 2;
-  if (top < 4) top = rect.top + 4;
-  if (left < 4) left = 4;
-  if (left + tw > window.innerWidth - 4) left = window.innerWidth - tw - 4;
-  _copyPanelHoverTooltip.style.cssText = `position:fixed;top:${top}px;left:${left}px;z-index:9999;pointer-events:none;`;
-});
-document.body.addEventListener('mouseout', (e) => {
-  const btn = e.target.closest('#btn-copy-panel');
-  if (!btn) return;
-  if (_copyPanelHoverTooltip) { _copyPanelHoverTooltip.remove(); _copyPanelHoverTooltip = null; }
-});
-
 function prepareSQLPanelContent(sql, title, categoryOpt) {
   document.getElementById('sql-panel-name').textContent = title || 'SQL Output';
   sqlOutput.innerHTML = highlightSQL(sql);
@@ -2139,17 +2606,18 @@ function showCopyTooltip(btn, text) {
   document.addEventListener('keydown', onEsc);
 }
 
+const _COPY_PANEL_ICON_DEFAULT = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 7.5V6.108c0-1.135.845-2.098 1.976-2.192.373-.03.748-.057 1.123-.08M15.75 18H18a2.25 2.25 0 0 0 2.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 0 0-1.123-.08M15.75 18.75v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5A3.375 3.375 0 0 0 6.375 7.5H5.25m11.9-3.664A2.251 2.251 0 0 0 15 2.25h-1.5a2.251 2.251 0 0 0-2.15 1.586m5.8 0c.065.21.1.433.1.664v.75h-6V4.5c0-.231.035-.454.1-.664M6.75 7.5H4.875c-.621 0-1.125.504-1.125 1.125v12c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V16.5a9 9 0 0 0-9-9Z" /></svg>`;
+
 function copySQLPanel() {
-  const btn = document.getElementById('btn-copy-panel');
   const raw = sqlOutput._rawSQL || sqlOutput.textContent;
-  navigator.clipboard.writeText(raw).then(() => {
-    if (btn) showCopyTooltip(btn, 'Copied!');
-  });
+  navigator.clipboard.writeText(raw).catch(() => {});
 }
 
 function resetCopyBtn() {
   const btn = document.getElementById('btn-copy-panel');
-  if (btn) btn.setAttribute('data-tooltip', 'Copy');
+  if (!btn) return;
+  btn.innerHTML = _COPY_PANEL_ICON_DEFAULT;
+  btn.style.color = '';
 }
 
 /* ── Mock results data ───────────────────────────────── */
@@ -2919,6 +3387,8 @@ function initSQLPanelExtras() {
 
 applyTenantShell();
 initSQLPanelExtras();
+// Close insight split-button dropdowns when clicking outside them.
+document.addEventListener('click', () => _closeAllInsightDropdowns());
 // Auth must resolve before loading any user-scoped storage. loadConversations()
 // and initSidebar() read localStorage keys namespaced by pwCurrentUser.id, so
 // they must run after the user is known.
@@ -2927,6 +3397,8 @@ initSQLPanelExtras();
   loadConversations();
   initSidebar();
   loadGreeting();
+  populateEmptyStateChips();
+  maybeShowGoalPrompt();
 })();
 
 /* ── Profile popover ─────────────────────────────────── */
@@ -3046,11 +3518,168 @@ function switchSettingsTab(tab) {
   if (tab === 'capabilities') {
     loadMemoryFromServer().then(() => { renderMemoryItems(); updateMemoryCounter(); });
     loadAndRenderConnections();
+    renderAutonomySelector();
+    renderCoachingSelector();
+    renderGoalSelector();
   }
   if (tab === 'data') {
     renderSettingsArchived();
     renderSettingsDeleted();
   }
+}
+
+/* ── Assistant Autonomy setting ──────────────────────── */
+
+function _getAutonomyLevel() {
+  return (pwPreferences && pwPreferences.assistantAutonomy) || 'propose';
+}
+
+function renderAutonomySelector() {
+  const level = _getAutonomyLevel();
+  document.querySelectorAll('.autonomy-option').forEach(btn => {
+    const active = btn.dataset.level === level;
+    btn.classList.toggle('autonomy-option--active', active);
+    btn.setAttribute('aria-checked', String(active));
+  });
+}
+
+async function setAutonomyLevel(level) {
+  const allowed = ['notify', 'propose', 'auto'];
+  if (!allowed.includes(level)) return;
+  renderAutonomySelectorOptimistic(level);
+  const ok = await updatePwPreferences({ assistantAutonomy: level });
+  if (!ok) renderAutonomySelector();
+}
+
+function renderAutonomySelectorOptimistic(level) {
+  if (pwPreferences) pwPreferences.assistantAutonomy = level;
+  document.querySelectorAll('.autonomy-option').forEach(btn => {
+    const active = btn.dataset.level === level;
+    btn.classList.toggle('autonomy-option--active', active);
+    btn.setAttribute('aria-checked', String(active));
+  });
+}
+
+/* ── Coaching Style setting ──────────────────────────── */
+
+function _getCoachingStyle() {
+  return (pwPreferences && pwPreferences.coachingStyle) || 'supportive';
+}
+
+function renderCoachingSelector() {
+  const style = _getCoachingStyle();
+  document.querySelectorAll('.coaching-option').forEach(btn => {
+    const active = btn.dataset.style === style;
+    btn.classList.toggle('coaching-option--active', active);
+    btn.setAttribute('aria-checked', String(active));
+  });
+}
+
+async function setCoachingStyle(style) {
+  const allowed = ['supportive', 'direct', 'data'];
+  if (!allowed.includes(style)) return;
+  if (pwPreferences) pwPreferences.coachingStyle = style;
+  document.querySelectorAll('.coaching-option').forEach(btn => {
+    const active = btn.dataset.style === style;
+    btn.classList.toggle('coaching-option--active', active);
+    btn.setAttribute('aria-checked', String(active));
+  });
+  const ok = await updatePwPreferences({ coachingStyle: style });
+  if (!ok) renderCoachingSelector();
+}
+
+/* ── Performance Goal setting ────────────────────────── */
+
+function _getFirmGoal() {
+  return (pwPreferences && pwPreferences.firmGoal) || 'steady';
+}
+
+function renderGoalSelector() {
+  const goal = _getFirmGoal();
+  document.querySelectorAll('.goal-option').forEach(btn => {
+    const active = btn.dataset.goal === goal;
+    btn.classList.toggle('goal-option--active', active);
+    btn.setAttribute('aria-checked', String(active));
+  });
+}
+
+async function setFirmGoal(goal) {
+  const allowed = ['stable', 'steady', 'significant', 'top'];
+  if (!allowed.includes(goal)) return;
+  if (pwPreferences) pwPreferences.firmGoal = goal;
+  document.querySelectorAll('.goal-option').forEach(btn => {
+    const active = btn.dataset.goal === goal;
+    btn.classList.toggle('goal-option--active', active);
+    btn.setAttribute('aria-checked', String(active));
+  });
+  const ok = await updatePwPreferences({ firmGoal: goal });
+  if (!ok) renderGoalSelector();
+}
+
+/* ── First-run goal prompt ────────────────────────────── */
+
+const _GOAL_PROMPT_KEY = 'pw_goal_prompt_shown';
+
+function _buildGoalPromptCard() {
+  const card = document.createElement('div');
+  card.className = 'goal-prompt-card';
+  card.id = 'goal-prompt-card';
+
+  const title = document.createElement('p');
+  title.className = 'goal-prompt-title';
+  title.textContent = 'Before we start — what’s your goal?';
+  card.appendChild(title);
+
+  const body = document.createElement('p');
+  body.className = 'goal-prompt-body';
+  body.textContent = 'Your assistant adjusts how urgently it coaches based on your ambition level. Pick the one that fits where your firm is right now.';
+  card.appendChild(body);
+
+  const pills = document.createElement('div');
+  pills.className = 'goal-prompt-pills';
+
+  const options = [
+    { goal: 'stable',      label: 'Keep things stable' },
+    { goal: 'steady',      label: 'Steady improvement' },
+    { goal: 'significant', label: 'Significant growth' },
+    { goal: 'top',         label: 'Hit top-performer numbers' },
+  ];
+  for (const { goal, label } of options) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'goal-prompt-pill';
+    btn.textContent = label;
+    btn.onclick = async () => {
+      localStorage.setItem(_GOAL_PROMPT_KEY, '1');
+      await setFirmGoal(goal);
+      card.remove();
+    };
+    pills.appendChild(btn);
+  }
+  card.appendChild(pills);
+
+  const skip = document.createElement('button');
+  skip.type = 'button';
+  skip.className = 'goal-prompt-skip';
+  skip.textContent = 'Skip for now';
+  skip.onclick = async () => {
+    localStorage.setItem(_GOAL_PROMPT_KEY, '1');
+    await setFirmGoal('steady');
+    card.remove();
+  };
+  card.appendChild(skip);
+
+  return card;
+}
+
+function maybeShowGoalPrompt() {
+  if (localStorage.getItem(_GOAL_PROMPT_KEY)) return;
+  const wrap = document.getElementById('quick-start-suggestions');
+  if (!wrap) return;
+  const existing = document.getElementById('goal-prompt-card');
+  if (existing) return;
+  const card = _buildGoalPromptCard();
+  wrap.parentNode.insertBefore(card, wrap);
 }
 
 async function saveProfileSettings() {

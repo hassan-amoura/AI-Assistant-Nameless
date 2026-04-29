@@ -350,6 +350,101 @@
               </div>
             </section>
 
+            <!-- Assistant Behaviour -->
+            <section class="settings-page-section" id="settings-autonomy-section">
+              <h3 class="settings-page-section-title">Assistant Behaviour</h3>
+              <p class="settings-page-section-sub">Control how much the assistant does on your behalf.</p>
+              <div class="autonomy-selector" id="autonomy-selector" role="radiogroup" aria-label="Assistant autonomy level">
+                <button class="autonomy-option" data-level="notify" onclick="setAutonomyLevel('notify')" role="radio" aria-checked="false" type="button">
+                  <div class="autonomy-option-header">
+                    <span class="autonomy-option-name">Notify only</span>
+                  </div>
+                  <div class="autonomy-option-desc">Surface insights and flag issues. I'll decide what to do.</div>
+                </button>
+                <button class="autonomy-option" data-level="propose" onclick="setAutonomyLevel('propose')" role="radio" aria-checked="false" type="button">
+                  <div class="autonomy-option-header">
+                    <span class="autonomy-option-name">Propose &amp; confirm</span>
+                    <span class="autonomy-option-recommended">Recommended</span>
+                  </div>
+                  <div class="autonomy-option-desc">Draft fixes and show me before applying anything.</div>
+                </button>
+                <button class="autonomy-option" data-level="auto" onclick="setAutonomyLevel('auto')" role="radio" aria-checked="false" type="button">
+                  <div class="autonomy-option-header">
+                    <span class="autonomy-option-name">Auto-apply</span>
+                  </div>
+                  <div class="autonomy-option-desc">Apply routine changes automatically. I'll review the summary.</div>
+                </button>
+              </div>
+              <p class="autonomy-financial-gate">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:inline;vertical-align:-1px;flex-shrink:0"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                Actions involving invoices, expenses, or payments always require your approval — this cannot be changed.
+              </p>
+            </section>
+
+            <!-- Coaching Style -->
+            <section class="settings-page-section" id="settings-coaching-section">
+              <h3 class="settings-page-section-title">Coaching Style</h3>
+              <p class="settings-page-section-sub">How your assistant communicates insights and recommendations.</p>
+              <div class="coaching-selector" id="coaching-selector" role="radiogroup" aria-label="Coaching style">
+                <button class="coaching-option" data-style="supportive" onclick="setCoachingStyle('supportive')" role="radio" aria-checked="false" type="button">
+                  <div class="coaching-option-header">
+                    <span class="coaching-option-name">Supportive &amp; confident</span>
+                    <span class="coaching-option-default">Default</span>
+                  </div>
+                  <div class="coaching-option-desc">Clear, direct, and encouraging. Urgent when the data calls for it.</div>
+                </button>
+                <button class="coaching-option" data-style="direct" onclick="setCoachingStyle('direct')" role="radio" aria-checked="false" type="button">
+                  <div class="coaching-option-header">
+                    <span class="coaching-option-name">Direct &amp; no-nonsense</span>
+                  </div>
+                  <div class="coaching-option-desc">Data first, minimal framing. Tell me what needs fixing.</div>
+                </button>
+                <button class="coaching-option" data-style="data" onclick="setCoachingStyle('data')" role="radio" aria-checked="false" type="button">
+                  <div class="coaching-option-header">
+                    <span class="coaching-option-name">Data only</span>
+                  </div>
+                  <div class="coaching-option-desc">Just the numbers and the gaps. I'll draw my own conclusions.</div>
+                </button>
+              </div>
+              <p class="coaching-urgency-note">
+                The assistant will always be more direct when your metrics need immediate attention — regardless of this setting.
+              </p>
+            </section>
+
+            <!-- Performance Goal -->
+            <section class="settings-page-section" id="settings-goal-section">
+              <h3 class="settings-page-section-title">Performance Goal</h3>
+              <p class="settings-page-section-sub">Set the ambition level your assistant coaches to.</p>
+              <div class="goal-selector" id="goal-selector" role="radiogroup" aria-label="Performance goal">
+                <button class="goal-option" data-goal="stable" onclick="setFirmGoal('stable')" role="radio" aria-checked="false" type="button">
+                  <div class="goal-option-header">
+                    <span class="goal-option-name">Stable performance</span>
+                  </div>
+                  <div class="goal-option-desc">Protect what's working. Insights focus on risk and maintenance.</div>
+                </button>
+                <button class="goal-option" data-goal="steady" onclick="setFirmGoal('steady')" role="radio" aria-checked="false" type="button">
+                  <div class="goal-option-header">
+                    <span class="goal-option-name">Steady improvement</span>
+                    <span class="goal-option-default">Default</span>
+                  </div>
+                  <div class="goal-option-desc">Close the gap to benchmark at a sustainable pace.</div>
+                </button>
+                <button class="goal-option" data-goal="significant" onclick="setFirmGoal('significant')" role="radio" aria-checked="false" type="button">
+                  <div class="goal-option-header">
+                    <span class="goal-option-name">Significant growth</span>
+                  </div>
+                  <div class="goal-option-desc">Push hard. Insights are more urgent, gaps feel larger.</div>
+                </button>
+                <button class="goal-option" data-goal="top" onclick="setFirmGoal('top')" role="radio" aria-checked="false" type="button">
+                  <div class="goal-option-header">
+                    <span class="goal-option-name">Top-performer target</span>
+                  </div>
+                  <div class="goal-option-desc">Nothing less than benchmark. Every gap is urgent.</div>
+                </button>
+              </div>
+              <p class="goal-intensity-note">Your assistant adjusts its coaching intensity based on this goal and your actual performance data.</p>
+            </section>
+
             <!-- Memory -->
             <section class="settings-page-section">
               <h3 class="settings-page-section-title">Memory</h3>

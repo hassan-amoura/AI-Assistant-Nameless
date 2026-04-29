@@ -19,6 +19,9 @@ const ALLOWED_REVENUE_METHODS = new Set([
 ]);
 
 const ALLOWED_EXPLANATION_STYLES = new Set(['default', 'concise', 'detailed']);
+const ALLOWED_AUTONOMY_LEVELS    = new Set(['notify', 'propose', 'auto']);
+const ALLOWED_COACHING_STYLES    = new Set(['supportive', 'direct', 'data']);
+const ALLOWED_FIRM_GOALS         = new Set(['stable', 'steady', 'significant', 'top']);
 
 function rowToPrefs(row) {
   return {
@@ -33,6 +36,9 @@ function rowToPrefs(row) {
       : PREF_DEFAULTS.nativeReportsFirst,
     name: null,
     displayName: null,
+    assistantAutonomy: PREF_DEFAULTS.assistantAutonomy,
+    coachingStyle: PREF_DEFAULTS.coachingStyle,
+    firmGoal: PREF_DEFAULTS.firmGoal,
   };
 }
 
@@ -66,8 +72,33 @@ function validatePatch(patch) {
       throw err;
     }
   }
-  // name and displayName are accepted but not persisted in the Postgres column;
-  // they are gracefully ignored here so the file-store path works without errors.
+  if ('assistantAutonomy' in patch) {
+    const v = patch.assistantAutonomy;
+    if (v !== null && v !== undefined && !ALLOWED_AUTONOMY_LEVELS.has(v)) {
+      const err = new Error('INVALID_AUTONOMY_LEVEL');
+      err.code = 'INVALID_AUTONOMY_LEVEL';
+      throw err;
+    }
+  }
+  if ('coachingStyle' in patch) {
+    const v = patch.coachingStyle;
+    if (v !== null && v !== undefined && !ALLOWED_COACHING_STYLES.has(v)) {
+      const err = new Error('INVALID_COACHING_STYLE');
+      err.code = 'INVALID_COACHING_STYLE';
+      throw err;
+    }
+  }
+  if ('firmGoal' in patch) {
+    const v = patch.firmGoal;
+    if (v !== null && v !== undefined && !ALLOWED_FIRM_GOALS.has(v)) {
+      const err = new Error('INVALID_FIRM_GOAL');
+      err.code = 'INVALID_FIRM_GOAL';
+      throw err;
+    }
+  }
+  // name, displayName, assistantAutonomy, coachingStyle, and firmGoal are accepted
+  // but not persisted in Postgres columns — gracefully ignored here so the
+  // file-store path works without errors. Persisting on Postgres requires column migrations.
 }
 
 /** @param {import('pg').Pool} pool */

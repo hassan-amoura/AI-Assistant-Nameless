@@ -5,12 +5,19 @@
  * FUTURE: load defaults from org/tenant policy; sync with full memory layer.
  */
 
+const ALLOWED_AUTONOMY_LEVELS = new Set(['notify', 'propose', 'auto']);
+const ALLOWED_COACHING_STYLES = new Set(['supportive', 'direct', 'data']);
+const ALLOWED_FIRM_GOALS      = new Set(['stable', 'steady', 'significant', 'top']);
+
 const PREF_DEFAULTS = {
   preferredRevenueMethod: null,
   explanationStyle: null,
   nativeReportsFirst: false,
   name: null,
   displayName: null,
+  assistantAutonomy: 'propose',
+  coachingStyle: 'supportive',
+  firmGoal: 'steady',
 };
 
 const ALLOWED_REVENUE_METHODS = new Set([
@@ -91,6 +98,33 @@ function createPreferencesService(store) {
         if ('displayName' in patch) {
           const v = patch.displayName;
           next.displayName = (v === null || v === undefined) ? null : String(v).slice(0, 100);
+        }
+        if ('assistantAutonomy' in patch) {
+          const v = patch.assistantAutonomy;
+          if (v !== null && v !== undefined && !ALLOWED_AUTONOMY_LEVELS.has(v)) {
+            const err = new Error('INVALID_AUTONOMY_LEVEL');
+            err.code = 'INVALID_AUTONOMY_LEVEL';
+            throw err;
+          }
+          next.assistantAutonomy = ALLOWED_AUTONOMY_LEVELS.has(v) ? v : PREF_DEFAULTS.assistantAutonomy;
+        }
+        if ('coachingStyle' in patch) {
+          const v = patch.coachingStyle;
+          if (v !== null && v !== undefined && !ALLOWED_COACHING_STYLES.has(v)) {
+            const err = new Error('INVALID_COACHING_STYLE');
+            err.code = 'INVALID_COACHING_STYLE';
+            throw err;
+          }
+          next.coachingStyle = ALLOWED_COACHING_STYLES.has(v) ? v : PREF_DEFAULTS.coachingStyle;
+        }
+        if ('firmGoal' in patch) {
+          const v = patch.firmGoal;
+          if (v !== null && v !== undefined && !ALLOWED_FIRM_GOALS.has(v)) {
+            const err = new Error('INVALID_FIRM_GOAL');
+            err.code = 'INVALID_FIRM_GOAL';
+            throw err;
+          }
+          next.firmGoal = ALLOWED_FIRM_GOALS.has(v) ? v : PREF_DEFAULTS.firmGoal;
         }
 
         doc.preferences[userId] = next;

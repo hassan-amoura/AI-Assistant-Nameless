@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node server.js",
     "db:init": "node scripts/db-init.js",
-    "db:import": "node scripts/import-from-json.js"
+    "db:import": "node scripts/import-from-json.js",
+    "test:methodology": "node scripts/test-methodology.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
