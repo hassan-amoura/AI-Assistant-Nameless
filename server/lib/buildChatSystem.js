@@ -15,7 +15,7 @@ const { REVENUE_MARGIN_GUIDANCE } = require('./revenueMarginGuidance');
  *                   Order: [instructions, schemaSliceOrOverview, tenantBlock?]
  *
  *   dynamicBlocks — per-request / per-user content. NEVER cached.
- *                   Order: [templateHint?, modeSuffix, revenueMarginGuidance?]
+ *                   Order: [templateHint?, modeSuffix, runtimeContext?, revenueMarginGuidance?]
  *
  * The caller (see anthropicClient.buildSystemWithCache) composes the Anthropic
  * system array by mapping cachedBlocks → cache_control: ephemeral blocks and
@@ -73,21 +73,32 @@ function pickSchemaBody(liveSchema, staticSchemaSection) {
  *   templateId: string|null,
  * }}
  */
-function buildChatSystemForRequest({ route, family, liveSchema, messages, tenantContextBlock, knowledgeItems }) {
+function buildChatSystemForRequest({
+  route,
+  family,
+  liveSchema,
+  messages,
+  tenantContextBlock,
+  knowledgeItems,
+  runtimeContextBlock,
+}) {
   const { instructions, schemaSection } = splitClaudeMd();
   const fullSchema = pickSchemaBody(liveSchema, schemaSection);
   const overview = schemaTableOverview(fullSchema);
   const lastUser = lastUserText(messages);
   const tenantBlock = (tenantContextBlock || '').trim();
   const knowledgeBlock = formatKnowledgeBlock(knowledgeItems);
+  const runtimeBlock = (runtimeContextBlock || '').trim();
 
   if (route === 'data_advisor') {
     const cachedBlocks = [instructions, overview];
     if (tenantBlock) cachedBlocks.push(tenantBlock);
     if (knowledgeBlock) cachedBlocks.push(knowledgeBlock);
+    const dynamicBlocks = [ADVISOR_MODE_SUFFIX];
+    if (runtimeBlock) dynamicBlocks.push(runtimeBlock);
     return {
       cachedBlocks,
-      dynamicBlocks: [ADVISOR_MODE_SUFFIX],
+      dynamicBlocks,
       route,
       family: family || 'general',
       templateId: null,
@@ -107,6 +118,7 @@ function buildChatSystemForRequest({ route, family, liveSchema, messages, tenant
   const dynamicBlocks = [];
   if (templateHint) dynamicBlocks.push(templateHint);
   dynamicBlocks.push(ENGINE_MODE_SUFFIX);
+  if (runtimeBlock) dynamicBlocks.push(runtimeBlock);
   dynamicBlocks.push(REVENUE_MARGIN_GUIDANCE);
 
   return {

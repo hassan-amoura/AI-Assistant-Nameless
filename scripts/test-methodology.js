@@ -81,6 +81,354 @@ try {
   record('MOCK DATA', false, '', `module load failed: ${e.message}`);
 }
 
+// ── 2b. Tenant intelligence snapshot contract ─────────────────────────────
+console.log('\n[2b] TENANT INTELLIGENCE SNAPSHOT CONTRACT');
+try {
+  const {
+    getTenantIntelligenceSnapshot,
+    validateTenantSnapshot,
+    SCHEMA_VERSION,
+    TOP_LEVEL_KEYS,
+  } = require('../server/lib/tenantData');
+  const { getMockTenantData } = require('../server/lib/methodology/mockTenantData');
+
+  const legacy = getMockTenantData('test-user', 'project_manager');
+  const snapshot = getTenantIntelligenceSnapshot({
+    tenantId: 'demo',
+    userId: 'test-user',
+    role: 'project_manager',
+    userContext: {
+      email: 'test@example.com',
+      displayName: 'Test User',
+      coachingStyle: 'direct',
+      firmGoal: 'top',
+      assistantAutonomy: 'propose',
+    },
+  });
+  const validation = validateTenantSnapshot(snapshot);
+
+  record('SNAPSHOT',
+    validation.valid,
+    'snapshot validates',
+    `snapshot validation failed: ${validation.errors.join('; ')}`);
+
+  let missingTopLevel = null;
+  for (const key of TOP_LEVEL_KEYS) {
+    if (!snapshot[key] || typeof snapshot[key] !== 'object' || Array.isArray(snapshot[key])) {
+      missingTopLevel = key;
+      break;
+    }
+  }
+  record('SNAPSHOT',
+    missingTopLevel === null,
+    'required top-level keys exist',
+    `missing or invalid top-level key '${missingTopLevel}'`);
+
+  record('SNAPSHOT',
+    snapshot.metadata.schemaVersion === SCHEMA_VERSION,
+    `metadata.schemaVersion === '${SCHEMA_VERSION}'`,
+    `expected metadata.schemaVersion='${SCHEMA_VERSION}', got '${snapshot.metadata && snapshot.metadata.schemaVersion}'`);
+
+  record('SNAPSHOT',
+    snapshot.methodContext && snapshot.methodContext.operationsTrackName === 'Visibility',
+    'methodContext carries current operations track',
+    `expected operationsTrackName='Visibility', got '${snapshot.methodContext && snapshot.methodContext.operationsTrackName}'`);
+
+  record('SNAPSHOT',
+    snapshot.firmStage && snapshot.firmStage.revenueBand === '$5M-$50M',
+    'firmStage exists and classifies mock revenue band',
+    `expected revenueBand='$5M-$50M', got '${snapshot.firmStage && snapshot.firmStage.revenueBand}'`);
+
+  record('SNAPSHOT',
+    snapshot.tenant.orgName === legacy.orgName &&
+      snapshot.financials.uninvoicedWip === legacy.outstandingWIP &&
+      snapshot.people.utilisation.currentRate === legacy.utilisationRate &&
+      snapshot.tenant.orgName === 'Meridian Consulting' &&
+      snapshot.financials.uninvoicedWip === 145000 &&
+      snapshot.people.utilisation.currentRate === 0.64,
+    'mock provider uses existing mock tenant data',
+    'snapshot values do not match legacy mock data');
+
+} catch (e) {
+  record('SNAPSHOT', false, '', `failed: ${e.message}`);
+}
+
+// ── 2c. Runtime capability registry contract ──────────────────────────────
+console.log('\n[2c] RUNTIME CAPABILITY REGISTRY CONTRACT');
+try {
+  const {
+    buildRuntimeCapabilities,
+    validateRuntimeCapabilities,
+    getCapabilityRegistry,
+  } = require('../server/lib/capabilities');
+
+  const registry = getCapabilityRegistry();
+  const runtime = buildRuntimeCapabilities({
+    checkedAt: '2026-04-30T00:00:00.000Z',
+    reportingStatus: 'not_configured',
+  });
+  const validation = validateRuntimeCapabilities(runtime);
+
+  record('CAPABILITIES',
+    Array.isArray(registry.integrations) && registry.integrations.length === 3,
+    'registry loads with 3 integrations',
+    `expected 3 integrations, got ${registry.integrations && registry.integrations.length}`);
+
+  record('CAPABILITIES',
+    validation.valid,
+    'runtime capability object validates',
+    `runtime validation failed: ${validation.errors.join('; ')}`);
+
+  const reporting = runtime.integrations.find(i => i.id === 'projectworks_reporting');
+  const actions = runtime.capabilities.projectworks.actions;
+  const metabase = runtime.capabilities.metabase;
+
+  record('CAPABILITIES',
+    !!reporting &&
+      reporting.label === 'Projectworks Reporting Data' &&
+      reporting.capabilities.readSchema === false &&
+      reporting.capabilities.runSql === false &&
+      reporting.capabilities.readReportingData === false &&
+      reporting.capabilities.writeActions === false,
+    'projectworks_reporting remains compatible with existing settings UI',
+    'projectworks_reporting integration shape or defaults changed');
+
+  record('CAPABILITIES',
+    actions &&
+      Object.keys(actions).length === 10 &&
+      Object.values(actions).every(v => v === false),
+    'projectworks_actions write capabilities are false by default',
+    `expected all projectworks action capabilities false, got ${JSON.stringify(actions)}`);
+
+  record('CAPABILITIES',
+    metabase &&
+      metabase.publishQuestion === false &&
+      metabase.publishDashboard === false,
+    'metabase publish capabilities are false by default',
+    `expected metabase publish capabilities false, got ${JSON.stringify(metabase)}`);
+
+} catch (e) {
+  record('CAPABILITIES', false, '', `failed: ${e.message}`);
+}
+
+// ── 2d. Action registry and disabled executor contract ────────────────────
+console.log('\n[2d] ACTION REGISTRY AND DISABLED EXECUTOR CONTRACT');
+try {
+  const {
+    getRegisteredActions,
+    validateRegisteredActions,
+    previewAction,
+    executeAction,
+  } = require('../server/lib/actions');
+
+  const actions = getRegisteredActions();
+  const validation = validateRegisteredActions(actions);
+  const tenantSnapshot = { tenant: { id: 'demo' } };
+  const user = { id: 'test-user', email: 'test@example.com' };
+  const enabledTaskCapabilities = {
+    projectworks: {
+      actions: {
+        createTask: true,
+        createDraftInvoice: true,
+      },
+    },
+    metabase: {},
+  };
+  const unavailableCapabilities = {
+    projectworks: { actions: {} },
+    metabase: {},
+  };
+
+  record('ACTIONS',
+    validation.valid && actions.length >= 11,
+    `all registered actions validate (${actions.length} action(s))`,
+    `action registry invalid: ${validation.errors.join('; ')}`);
+
+  const notifyPreview = previewAction(
+    { id: 'create_task', tenantId: 'demo', inputs: { projectId: 'P-1', name: 'Follow up' } },
+    { user, tenantSnapshot, capabilities: enabledTaskCapabilities, assistantAutonomy: 'notify' },
+  );
+  record('ACTIONS',
+    !notifyPreview.policy.canExecute &&
+      notifyPreview.policy.reasons.some(r => r.code === 'AUTONOMY_NOTIFY_ONLY'),
+    'notify mode denies execution',
+    `expected AUTONOMY_NOTIFY_ONLY, got ${JSON.stringify(notifyPreview.policy.reasons)}`);
+
+  const proposePreview = previewAction(
+    { id: 'create_task', tenantId: 'demo', inputs: { projectId: 'P-1', name: 'Follow up' } },
+    { user, tenantSnapshot, capabilities: enabledTaskCapabilities, assistantAutonomy: 'propose' },
+  );
+  record('ACTIONS',
+    !proposePreview.policy.canExecute &&
+      proposePreview.policy.reasons.some(r => r.code === 'CONFIRMATION_REQUIRED'),
+    'propose mode requires confirmation',
+    `expected CONFIRMATION_REQUIRED, got ${JSON.stringify(proposePreview.policy.reasons)}`);
+
+  const autoFinancialPreview = previewAction(
+    { id: 'create_draft_invoice', tenantId: 'demo', inputs: { projectId: 'P-1' } },
+    { user, tenantSnapshot, capabilities: enabledTaskCapabilities, assistantAutonomy: 'auto' },
+  );
+  record('ACTIONS',
+    !autoFinancialPreview.policy.canExecute &&
+      autoFinancialPreview.policy.reasons.some(r => r.code === 'AUTO_RESTRICTED'),
+    'auto mode denies financial actions',
+    `expected AUTO_RESTRICTED, got ${JSON.stringify(autoFinancialPreview.policy.reasons)}`);
+
+  const unavailablePreview = previewAction(
+    { id: 'create_task', tenantId: 'demo', inputs: { projectId: 'P-1', name: 'Follow up' } },
+    { user, tenantSnapshot, capabilities: unavailableCapabilities, assistantAutonomy: 'auto' },
+  );
+  record('ACTIONS',
+    !unavailablePreview.policy.canExecute &&
+      unavailablePreview.policy.reasons.some(r => r.code === 'CAPABILITY_UNAVAILABLE'),
+    'unavailable capability denies execution',
+    `expected CAPABILITY_UNAVAILABLE, got ${JSON.stringify(unavailablePreview.policy.reasons)}`);
+
+  const disabledResult = executeAction(
+    { id: 'create_task', tenantId: 'demo', inputs: { projectId: 'P-1', name: 'Follow up' } },
+    { user, tenantSnapshot, capabilities: enabledTaskCapabilities, assistantAutonomy: 'auto' },
+  );
+  record('ACTIONS',
+    disabledResult.ok === false &&
+      disabledResult.code === 'CAPABILITY_UNAVAILABLE' &&
+      /Projectworks connection isn't available/.test(disabledResult.userMessage || ''),
+    'disabled provider never claims success',
+    `expected disabled provider failure, got ${JSON.stringify(disabledResult)}`);
+
+} catch (e) {
+  record('ACTIONS', false, '', `failed: ${e.message}`);
+}
+
+// ── 2e. Runtime chat context contract ────────────────────────────────────
+console.log('\n[2e] RUNTIME CHAT CONTEXT CONTRACT');
+try {
+  const { buildRuntimeCapabilities } = require('../server/lib/capabilities');
+  const { buildRuntimeContextBlock } = require('../server/lib/contextBuilder');
+  const { buildChatSystemForRequest } = require('../server/lib/buildChatSystem');
+
+  const runtime = buildRuntimeCapabilities({
+    checkedAt: '2026-04-30T00:00:00.000Z',
+    reportingStatus: 'not_configured',
+  });
+  const runtimeBlock = buildRuntimeContextBlock({
+    preferences: {
+      assistantAutonomy: 'propose',
+      coachingStyle: 'supportive',
+      firmGoal: 'steady',
+    },
+    runtimeCapabilities: runtime,
+    user: { id: 'test-user', email: 'test@example.com' },
+    tenantContext: { id: 'demo', source: 'static_demo' },
+  });
+
+  record('RUNTIME CONTEXT',
+    runtimeBlock.includes('<runtime_context>') &&
+      runtimeBlock.includes('assistantAutonomy: propose') &&
+      runtimeBlock.includes('coachingStyle: supportive') &&
+      runtimeBlock.includes('firmGoal: steady'),
+    'runtime block includes autonomy, coaching style, and firm goal',
+    `runtime block missing expected preference values: ${runtimeBlock}`);
+
+  record('RUNTIME CONTEXT',
+    runtimeBlock.includes('Projectworks write actions: unavailable') &&
+      runtimeBlock.includes('Do not claim write completion') &&
+      runtimeBlock.includes('prepare/validate/propose only'),
+    'runtime block makes write actions unavailable and advisory',
+    `runtime block overclaims or omits action policy: ${runtimeBlock}`);
+
+  const built = buildChatSystemForRequest({
+    route: 'sql_engine',
+    family: 'general',
+    liveSchema: null,
+    messages: [{ role: 'user', content: 'show revenue by client' }],
+    tenantContextBlock: '',
+    knowledgeItems: [],
+    runtimeContextBlock: runtimeBlock,
+  });
+  const cachedText = built.cachedBlocks.join('\n');
+  const dynamicText = built.dynamicBlocks.join('\n');
+
+  record('RUNTIME CONTEXT',
+    !cachedText.includes('<runtime_context>') && dynamicText.includes('<runtime_context>'),
+    'runtime context is dynamic only and not cached',
+    'runtime context appeared in cached prompt blocks or was missing from dynamic blocks');
+
+  record('RUNTIME CONTEXT',
+    dynamicText.includes('Use the exact <reasoning>') &&
+      dynamicText.includes('fenced sql format'),
+    'SQL output format expectation remains present',
+    'SQL engine dynamic prompt no longer includes the expected reasoning/sql format reminder');
+
+} catch (e) {
+  record('RUNTIME CONTEXT', false, '', `failed: ${e.message}`);
+}
+
+// ── 2f. AI model provider abstraction contract ───────────────────────────
+console.log('\n[2f] AI MODEL PROVIDER CONTRACT');
+try {
+  const {
+    getModelProvider,
+    normalizeProviderName,
+    parseJsonFromText,
+  } = require('../server/lib/ai');
+  const {
+    anthropicMessagesOnce,
+    anthropicMessagesWithRetry,
+    buildSystemWithCache,
+  } = require('../server/lib/anthropicClient');
+
+  const provider = getModelProvider({ env: {} });
+
+  record('AI PROVIDER',
+    provider.id === 'anthropic' &&
+      typeof provider.generateText === 'function' &&
+      typeof provider.generateJson === 'function' &&
+      typeof provider.streamText === 'function',
+    'default provider is Anthropic and implements the provider interface',
+    `expected default anthropic provider, got ${provider && provider.id}`);
+
+  let unsupportedErr = null;
+  try {
+    getModelProvider({ env: { AI_PROVIDER: 'gemini' } });
+  } catch (e) {
+    unsupportedErr = e;
+  }
+  record('AI PROVIDER',
+    unsupportedErr && unsupportedErr.code === 'UNSUPPORTED_AI_PROVIDER',
+    'unsupported provider errors clearly',
+    `expected UNSUPPORTED_AI_PROVIDER, got ${unsupportedErr && unsupportedErr.code}`);
+
+  const openaiProvider = getModelProvider({ env: { AI_PROVIDER: 'openai' } });
+  record('AI PROVIDER',
+    openaiProvider.id === 'openai' && openaiProvider.isConfigured() === false,
+    'OpenAI provider is optional and unconfigured without OPENAI_API_KEY',
+    `expected unconfigured openai provider, got id=${openaiProvider && openaiProvider.id}`);
+
+  record('AI PROVIDER',
+    normalizeProviderName(' Anthropic ') === 'anthropic' &&
+      normalizeProviderName('OPENAI') === 'openai',
+    'provider names normalize predictably',
+    'provider name normalization failed');
+
+  record('AI PROVIDER',
+    parseJsonFromText('```json\n{"route":"sql_engine","confidence":1}\n```').route === 'sql_engine',
+    'JSON fence stripping works',
+    'fenced JSON did not parse');
+
+  const cachedSystem = buildSystemWithCache(['static'], ['dynamic']);
+  record('AI PROVIDER',
+    typeof anthropicMessagesOnce === 'function' &&
+      typeof anthropicMessagesWithRetry === 'function' &&
+      cachedSystem[0].cache_control &&
+      cachedSystem[0].cache_control.type === 'ephemeral' &&
+      !cachedSystem[1].cache_control,
+    'existing anthropicClient facade and prompt caching still work',
+    'anthropicClient compatibility facade changed unexpectedly');
+
+} catch (e) {
+  record('AI PROVIDER', false, '', `failed: ${e.message}`);
+}
+
 // ── 3. Maturity assessment ────────────────────────────────────────────────
 console.log('\n[3] MATURITY ASSESSMENT SCORES CORRECTLY');
 try {

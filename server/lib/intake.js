@@ -3,6 +3,7 @@
 const { getAnthropicModelLight } = require('./models');
 const { anthropicMessagesWithRetry } = require('./anthropicClient');
 const { lastUserText, buildIntakeTranscript } = require('./contextBuilder');
+const { parseJsonFromText } = require('./ai/jsonUtils');
 
 /**
  * Lightweight routing step — cheap model, non-streaming, small JSON.
@@ -23,18 +24,6 @@ function heuristicBypass(messages) {
     return { route: 'data_advisor', family: 'general', confidence: 0.95, metabase_topic: false, reason: 'greeting' };
   }
   return null;
-}
-
-function safeJsonParse(raw) {
-  let t = raw.trim();
-  if (t.startsWith('```')) {
-    t = t.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-  }
-  try {
-    return JSON.parse(t);
-  } catch {
-    return null;
-  }
 }
 
 async function classifyIntent(messages, apiKey) {
@@ -66,7 +55,7 @@ async function classifyIntent(messages, apiKey) {
   }
   const data = await res.json().catch(() => ({}));
   const rawText = data.content?.[0]?.text || '';
-  const parsed = safeJsonParse(rawText);
+  const parsed = parseJsonFromText(rawText);
   if (!parsed || typeof parsed.route !== 'string') {
     return { route: 'sql_engine', family: 'general', confidence: 0, metabase_topic: false, needs_clarification: false, reason: 'intake_parse_fallback' };
   }
