@@ -84,10 +84,11 @@ const { buildChatSystemForRequest } = require('./server/lib/buildChatSystem');
 const { anthropicMessagesWithRetry, buildSystemWithCache } = require('./server/lib/anthropicClient');
 const { rateLimitHit } = require('./server/lib/rateLimit');
 const { getWorkspaceKnowledge, addWorkspaceKnowledge } = require('./server/lib/knowledgeStore');
-const { generateInsights } = require('./server/lib/methodology/insightGenerator');
+const { generateInsights, generateCopyForInsights } = require('./server/lib/methodology/insightGenerator');
 const { getMockTenantData } = require('./server/lib/methodology/mockTenantData');
 const { assessMaturity } = require('./server/lib/methodology/maturityAssessor');
 const insightsStore = require('./server/lib/methodology/insightsStore');
+const { getTenantIntelligenceSnapshot } = require('./server/lib/tenantData');
 const { getRuntimeCapabilities } = require('./server/lib/capabilities');
 const { previewAction, executeAction } = require('./server/lib/actions');
 
@@ -769,8 +770,9 @@ app.get('/api/insights', async (req, res) => {
   const userRole = 'project_manager';
   const tenantData = getMockTenantData(userId, userRole);
   // Apply user's saved coaching style and firm goal preferences (override mock defaults).
+  let prefs = null;
   try {
-    const prefs = await preferencesService.getForUserId(userId);
+    prefs = await preferencesService.getForUserId(userId);
     if (prefs && prefs.coachingStyle) tenantData.coachingStyle = prefs.coachingStyle;
     if (prefs && prefs.firmGoal)      tenantData.firmGoal      = prefs.firmGoal;
   } catch (_) { /* fall back to mock default */ }
@@ -779,7 +781,32 @@ app.get('/api/insights', async (req, res) => {
   for (const insight of fresh) {
     insightsStore.addInsight(userId, insight);
   }
-  const stored = insightsStore.getInsights(userId);
+  let stored = insightsStore.getInsights(userId);
+  try {
+    const tenantSnapshot = getTenantIntelligenceSnapshot({
+      tenantId: tenantData.tenantId || 'demo',
+      userId,
+      role: userRole,
+      userContext: {
+        email: req.authUser.email,
+        displayName: req.authUser.displayName || req.authUser.name,
+        coachingStyle: tenantData.coachingStyle,
+        firmGoal: tenantData.firmGoal,
+        assistantAutonomy: prefs && prefs.assistantAutonomy,
+      },
+    });
+    const withGeneratedCopy = await generateCopyForInsights(stored, {
+      tenantSnapshot,
+      userRole,
+      userMessage: 'Generate Your Assistant insight card copy.',
+    });
+    for (const insight of withGeneratedCopy) {
+      insightsStore.addInsight(userId, insight);
+    }
+    stored = insightsStore.getInsights(userId);
+  } catch (err) {
+    console.warn('[insights] generated copy unavailable:', err.message);
+  }
   const unreadCount = stored.filter(i => !i.read).length;
   return res.json({ insights: stored, maturity, unreadCount });
 });

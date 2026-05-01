@@ -3,6 +3,11 @@
 const { assessMaturity } = require('./maturityAssessor');
 const { getMockTenantData } = require('./mockTenantData');
 const { operationsTrack } = require('./knowledgeBase');
+const { getModelProvider, parseJsonFromText } = require('../ai');
+const { selectRelevantKnowledge } = require('../knowledge');
+
+const INSIGHT_SCHEMA_VERSION = 'insight.v2';
+const GENERATED_COPY_MAX_KNOWLEDGE_CARDS = 3;
 
 function isoWeek(date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -42,6 +47,286 @@ function humanJoinNames(names) {
 
 function shortClientName(client) {
   return String(client || '').split(/[\s,]/)[0];
+}
+
+function roundPp(value) {
+  return Math.round(value * 10) / 10;
+}
+
+function makeStableIdentity(factKind, ...parts) {
+  return makeId(factKind, ...parts.filter(part => part !== undefined && part !== null && part !== ''));
+}
+
+function nonEmptyText(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function buildInsight(factKind, identityParts, insight, facts) {
+  const title = nonEmptyText(insight.title)
+    ? insight.title
+    : (nonEmptyText(insight.situationTitle) ? insight.situationTitle : 'Insight');
+  const body = nonEmptyText(insight.body)
+    ? insight.body
+    : (nonEmptyText(insight.decisionBridge) ? insight.decisionBridge : title);
+  const action = nonEmptyText(insight.action)
+    ? insight.action
+    : (nonEmptyText(insight.primaryAction) ? insight.primaryAction : 'Review in Chat');
+  const situationTitle = nonEmptyText(insight.situationTitle) ? insight.situationTitle : title;
+  const decisionBridge = nonEmptyText(insight.decisionBridge) ? insight.decisionBridge : body;
+  const primaryAction = nonEmptyText(insight.primaryAction) ? insight.primaryAction : action;
+  const secondaryOptions = Array.isArray(insight.secondaryOptions) && insight.secondaryOptions.length
+    ? insight.secondaryOptions
+    : ['Review in Chat', 'Dismiss'];
+  const parts = Array.isArray(identityParts) ? identityParts : [identityParts];
+
+  const {
+    stableIdentity: providedStableIdentity,
+    generatedCopy,
+    cacheExpiresAt,
+    schemaVersion,
+    ...rest
+  } = insight;
+
+  return {
+    ...rest,
+    stableIdentity: providedStableIdentity || makeStableIdentity(factKind, ...parts),
+    facts: facts && typeof facts === 'object' ? facts : {},
+    generatedCopy: generatedCopy === undefined ? null : generatedCopy,
+    cacheExpiresAt: cacheExpiresAt === undefined ? null : cacheExpiresAt,
+    situationTitle,
+    decisionBridge,
+    primaryAction,
+    secondaryOptions,
+    title,
+    body,
+    action,
+    read: insight.read === true,
+    dismissed: insight.dismissed === true,
+    schemaVersion: schemaVersion || INSIGHT_SCHEMA_VERSION,
+  };
+}
+
+function missingTimesheetFacts(people) {
+  return {
+    people: (people || []).map(person => ({
+      name: person.name || null,
+      project: person.project || null,
+      timecode: person.timecode || person.timecodeName || null,
+      allocatedHoursPerWeek: typeof person.allocatedHoursPerWeek === 'number'
+        ? person.allocatedHoursPerWeek
+        : (typeof person.weeklyHours === 'number' ? person.weeklyHours : null),
+    })),
+  };
+}
+
+function isCacheFresh(insight, nowMs) {
+  if (!insight || !insight.generatedCopy || !insight.cacheExpiresAt) return false;
+  const expires = Date.parse(insight.cacheExpiresAt);
+  return Number.isFinite(expires) && expires > nowMs;
+}
+
+function cacheExpiresAtFor(cadence, now) {
+  const date = new Date(now.getTime());
+  const days = cadence === 'monthly'
+    ? 30
+    : (cadence === 'weekly' ? 7 : 1);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString();
+}
+
+function compactKnowledgeCard(card) {
+  return {
+    id: card.id,
+    sourceType: card.sourceType,
+    authority: card.authority,
+    sourceTitle: card.sourceTitle,
+    topics: Array.isArray(card.topics) ? card.topics.slice(0, 8) : [],
+    principle: card.principle,
+    evidenceSummary: card.evidenceSummary,
+    recommendedActions: Array.isArray(card.recommendedActions)
+      ? card.recommendedActions.slice(0, 4)
+      : [],
+    confidence: card.confidence,
+  };
+}
+
+function buildGeneratedCopyRequest(insights, userContext, now) {
+  const requestInsights = insights.map(insight => {
+    const knowledgeCards = selectRelevantKnowledge({
+      tenantSnapshot: userContext.tenantSnapshot,
+      insight,
+      userMessage: userContext.userMessage || '',
+      userRole: userContext.userRole,
+      limit: GENERATED_COPY_MAX_KNOWLEDGE_CARDS,
+    });
+
+    return {
+      id: insight.id,
+      type: insight.type,
+      metric: insight.metric,
+      cadence: insight.cadence,
+      severity: insight.severity,
+      audience: insight.audience,
+      facts: insight.facts || {},
+      currentCopy: {
+        situationTitle: insight.situationTitle || insight.title || '',
+        decisionBridge: insight.decisionBridge || insight.body || '',
+        primaryAction: insight.primaryAction || insight.action || '',
+        secondaryOptions: Array.isArray(insight.secondaryOptions) ? insight.secondaryOptions : [],
+      },
+      knowledgeCards: knowledgeCards.map(compactKnowledgeCard),
+    };
+  });
+
+  return {
+    generatedAt: now.toISOString(),
+    instructions: [
+      'Return JSON only.',
+      'Write concise Projectworks assistant card copy from facts and knowledge cards.',
+      'Do not invent tenant facts, names, dates, amounts, or action capability.',
+      'Keep copy calm, direct, and consultant-grade.',
+      'Use only knowledge card IDs in knowledgeBasis.',
+    ],
+    outputShape: {
+      insights: [{
+        id: 'string',
+        situationTitle: 'string',
+        decisionBridge: 'string',
+        primaryAction: 'string',
+        secondaryOptions: ['string'],
+        priorityReason: 'string',
+        knowledgeBasis: ['knowledge-card-id'],
+      }],
+    },
+    insights: requestInsights,
+  };
+}
+
+function normalizeGeneratedCopy(insight, rawCopy, allowedKnowledgeIds) {
+  const source = rawCopy && typeof rawCopy === 'object' ? rawCopy : {};
+  const fallbackOptions = Array.isArray(insight.secondaryOptions) && insight.secondaryOptions.length
+    ? insight.secondaryOptions
+    : ['Review in Chat', 'Dismiss'];
+  const secondaryOptions = Array.isArray(source.secondaryOptions)
+    ? source.secondaryOptions.filter(nonEmptyText).slice(0, 4)
+    : fallbackOptions.slice(0, 4);
+  for (const sentinel of ['Review in Chat', 'Dismiss']) {
+    if (!secondaryOptions.includes(sentinel)) secondaryOptions.push(sentinel);
+  }
+
+  const allowed = new Set(allowedKnowledgeIds || []);
+  const requestedBasis = Array.isArray(source.knowledgeBasis)
+    ? source.knowledgeBasis.filter(id => typeof id === 'string' && allowed.has(id))
+    : [];
+  const knowledgeBasis = requestedBasis.length ? requestedBasis : Array.from(allowed);
+
+  return {
+    id: insight.id,
+    situationTitle: nonEmptyText(source.situationTitle)
+      ? source.situationTitle.trim()
+      : (insight.situationTitle || insight.title || 'Insight'),
+    decisionBridge: nonEmptyText(source.decisionBridge)
+      ? source.decisionBridge.trim()
+      : (insight.decisionBridge || insight.body || 'Review this insight.'),
+    primaryAction: nonEmptyText(source.primaryAction)
+      ? source.primaryAction.trim()
+      : (insight.primaryAction || insight.action || 'Review in Chat'),
+    secondaryOptions: secondaryOptions.length ? secondaryOptions : fallbackOptions,
+    priorityReason: nonEmptyText(source.priorityReason)
+      ? source.priorityReason.trim()
+      : 'Generated from tenant facts and selected methodology cards.',
+    knowledgeBasis,
+  };
+}
+
+function applyGeneratedCopy(insight, generatedCopy, cacheExpiresAt) {
+  const copy = normalizeGeneratedCopy(insight, generatedCopy, generatedCopy && generatedCopy.knowledgeBasis);
+  return {
+    ...insight,
+    generatedCopy: copy,
+    cacheExpiresAt,
+    situationTitle: copy.situationTitle,
+    decisionBridge: copy.decisionBridge,
+    primaryAction: copy.primaryAction,
+    secondaryOptions: copy.secondaryOptions,
+  };
+}
+
+function parseGeneratedCopyResponse(raw) {
+  const parsed = typeof raw === 'string' ? parseJsonFromText(raw) : raw;
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && Array.isArray(parsed.insights)) return parsed.insights;
+  return null;
+}
+
+async function generateCopyForInsights(insights, userContext = {}) {
+  const list = Array.isArray(insights) ? insights : [];
+  const now = userContext.now instanceof Date
+    ? userContext.now
+    : new Date(userContext.now || Date.now());
+  const nowMs = now.getTime();
+  const candidates = list
+    .filter(insight => insight && insight.id && !isCacheFresh(insight, nowMs));
+
+  if (!candidates.length) return list;
+
+  let provider;
+  try {
+    provider = userContext.modelProvider || getModelProvider({
+      providerName: userContext.providerName,
+      env: userContext.env || process.env,
+    });
+  } catch (_) {
+    return list;
+  }
+  if (provider && typeof provider.isConfigured === 'function' && !provider.isConfigured()) {
+    return list;
+  }
+  if (!provider || typeof provider.generateText !== 'function') {
+    return list;
+  }
+
+  const request = buildGeneratedCopyRequest(candidates, userContext, now);
+  const knowledgeIdsByInsight = new Map(request.insights.map(item => [
+    item.id,
+    item.knowledgeCards.map(card => card.id).filter(Boolean),
+  ]));
+
+  let parsedCopies = null;
+  try {
+    const text = await provider.generateText({
+      system: [
+        'You generate JSON card copy for the Projectworks Assistant.',
+        'Return only valid JSON. Do not include markdown fences.',
+        'Never claim write actions executed. Keep action language proposal-oriented.',
+      ].join(' '),
+      messages: [{
+        role: 'user',
+        content: JSON.stringify(request),
+      }],
+      temperature: 0.2,
+      maxTokens: 1600,
+    }, {
+      maxRetries: 0,
+      env: userContext.env || process.env,
+    });
+    parsedCopies = parseGeneratedCopyResponse(text);
+  } catch (_) {
+    return list;
+  }
+
+  if (!parsedCopies) return list;
+  const copyById = new Map(parsedCopies
+    .filter(copy => copy && typeof copy.id === 'string')
+    .map(copy => [copy.id, copy]));
+
+  return list.map(insight => {
+    const rawCopy = copyById.get(insight.id);
+    if (!rawCopy) return insight;
+    const allowedKnowledgeIds = knowledgeIdsByInsight.get(insight.id) || [];
+    const generatedCopy = normalizeGeneratedCopy(insight, rawCopy, allowedKnowledgeIds);
+    return applyGeneratedCopy(insight, generatedCopy, cacheExpiresAtFor(insight.cadence, now));
+  });
 }
 
 /**
@@ -255,7 +540,7 @@ function generateInsights(userId, userRole, tenantData, maturityResult) {
       if (voice.suffix) sections.push(voice.suffix);
       const body = sections.join('\n\n');
 
-      all.push({
+      all.push(buildInsight('utilisation_gap', [orgName], {
         id: makeId('util-gap', wk),
         userId,
         type: 'benchmark_gap',
@@ -280,7 +565,26 @@ function generateInsights(userId, userRole, tenantData, maturityResult) {
         read: false,
         dismissed: false,
         createdAt: now,
-      });
+      }, {
+        currentRate: rate,
+        benchmarkRate: 0.698,
+        gapPp: roundPp((0.698 - rate) * 100),
+        previousRate: typeof tenantData.previousUtilisationRate === 'number'
+          ? tenantData.previousUtilisationRate
+          : null,
+        orgName,
+        billableHeadcount: bh,
+        impliedChargeOutRate: cr,
+        lowUtilStaff: lowUtil.map(s => ({
+          name: s.name,
+          utilisationRate: s.utilisationThisMonth,
+        })),
+        teamBreakdown: [{
+          team: 'All billable staff',
+          currentRate: rate,
+          billableHeadcount: bh,
+        }],
+      }));
     }
   }
 
@@ -297,7 +601,7 @@ function generateInsights(userId, userRole, tenantData, maturityResult) {
           ? `Review & submit for ${firstNames[0]} + ${firstNames[1]}`
           : `Review & submit for ${missing.length} people`;
 
-      all.push({
+      all.push(buildInsight('missing_timesheets', missing.map(s => s.name), {
         id: makeId('missing-ts', wk),
         userId,
         type: 'missing_behavior',
@@ -316,7 +620,7 @@ function generateInsights(userId, userRole, tenantData, maturityResult) {
         read: false,
         dismissed: false,
         createdAt: now,
-      });
+      }, missingTimesheetFacts(missing)));
     }
   }
 
@@ -327,7 +631,7 @@ function generateInsights(userId, userRole, tenantData, maturityResult) {
     if (typeof weeks === 'number' && weeks < 8) {
       const gapPp = (8 - weeks);             // weeks short, treated as the gap signal
       const voice = getCoachingVoice(gapPp, coachingStyle, undefined, firmGoal);
-      all.push({
+      all.push(buildInsight('forward_booking_gap', [orgName], {
         id: makeId('fwd-booking', wk),
         userId,
         type: 'benchmark_gap',
@@ -350,7 +654,14 @@ function generateInsights(userId, userRole, tenantData, maturityResult) {
         read: false,
         dismissed: false,
         createdAt: now,
-      });
+      }, {
+        currentWeeks: weeks,
+        targetWeeks: 8,
+        orgName,
+        pendingProposals: Array.isArray(tenantData.pendingProposals)
+          ? tenantData.pendingProposals
+          : [],
+      }));
     }
   }
 
@@ -361,7 +672,7 @@ function generateInsights(userId, userRole, tenantData, maturityResult) {
     for (const p of atRisk) {
       const overPct = Math.round((p.workedAmount / p.budgetFee - 1) * 100);
       const overAbs = Math.abs(overPct);
-      all.push({
+      all.push(buildInsight('at_risk_project', [p.name], {
         id: makeId('at-risk', p.name, wk),
         userId,
         type: 'at_risk',
@@ -381,7 +692,14 @@ function generateInsights(userId, userRole, tenantData, maturityResult) {
         read: false,
         dismissed: false,
         createdAt: now,
-      });
+      }, {
+        project: p.name,
+        client: p.client || null,
+        budgetFee: p.budgetFee,
+        workedAmount: p.workedAmount,
+        overBudgetPct: overAbs,
+        overBudgetAmount: Math.max(0, Math.round(p.workedAmount - p.budgetFee)),
+      }));
     }
   }
 
@@ -390,7 +708,7 @@ function generateInsights(userId, userRole, tenantData, maturityResult) {
     const audience = ['finance', 'director', 'project_manager'];
     const overdue = tenantData.overdueInvoices || [];
     for (const inv of overdue) {
-      all.push({
+      all.push(buildInsight('overdue_invoice', [inv.invoiceNumber], {
         id: makeId('overdue', inv.invoiceNumber, wk),
         userId,
         type: 'at_risk',
@@ -410,7 +728,16 @@ function generateInsights(userId, userRole, tenantData, maturityResult) {
         read: false,
         dismissed: false,
         createdAt: now,
-      });
+      }, {
+        client: inv.client,
+        amount: inv.amount,
+        daysOverdue: inv.daysOverdue,
+        invoiceNumber: inv.invoiceNumber,
+        paymentTerms: inv.paymentTerms || null,
+        lastContactDaysAgo: typeof inv.lastContactDaysAgo === 'number'
+          ? inv.lastContactDaysAgo
+          : null,
+      }));
     }
   }
 
@@ -419,7 +746,7 @@ function generateInsights(userId, userRole, tenantData, maturityResult) {
     const audience = ['finance', 'director'];
     const wip = tenantData.outstandingWIP;
     if (typeof wip === 'number' && wip > 0) {
-      all.push({
+      all.push(buildInsight('wip_flag', [orgName], {
         id: makeId('wip-flag', wk),
         userId,
         type: 'benchmark_gap',
@@ -439,7 +766,13 @@ function generateInsights(userId, userRole, tenantData, maturityResult) {
         read: false,
         dismissed: false,
         createdAt: now,
-      });
+      }, {
+        totalWip: wip,
+        oldestMonth: tenantData.oldestWipMonth || 'mid-March',
+        projectBreakdown: Array.isArray(tenantData.wipProjectBreakdown)
+          ? tenantData.wipProjectBreakdown
+          : [],
+      }));
     }
   }
 
@@ -453,7 +786,7 @@ function generateInsights(userId, userRole, tenantData, maturityResult) {
       const allocLine = alloc
         ? ` You're allocated ${alloc.weeklyHours} hours on ${alloc.project} (${alloc.timecodeName}).`
         : '';
-      all.push({
+      all.push(buildInsight('missing_timesheets', [userId, pending.week], {
         id: makeId('ts-status', pending.week),
         userId,
         type: 'reminder',
@@ -467,7 +800,12 @@ function generateInsights(userId, userRole, tenantData, maturityResult) {
         read: false,
         dismissed: false,
         createdAt: now,
-      });
+      }, missingTimesheetFacts([{
+        name: 'You',
+        project: alloc ? alloc.project : null,
+        timecodeName: alloc ? alloc.timecodeName : null,
+        weeklyHours: alloc ? alloc.weeklyHours : null,
+      }])));
     }
   }
 
@@ -477,7 +815,7 @@ function generateInsights(userId, userRole, tenantData, maturityResult) {
     const audience = ['time_expense'];
     const alloc = (tenantData.myAllocations || [])[0];
     if (alloc) {
-      all.push({
+      all.push(buildInsight('allocation_summary', [userId, alloc.project], {
         id: makeId('alloc', alloc.project, wk),
         userId,
         type: 'reminder',
@@ -491,11 +829,18 @@ function generateInsights(userId, userRole, tenantData, maturityResult) {
         read: false,
         dismissed: false,
         createdAt: now,
-      });
+      }, {
+        project: alloc.project,
+        timecode: alloc.timecodeName || null,
+        allocatedHours: alloc.allocatedHours,
+        loggedHours: alloc.loggedHours,
+        remainingHours: alloc.remainingHours,
+        allocatedHoursPerWeek: alloc.weeklyHours,
+      }));
     }
   }
 
   return all.filter(i => audienceMatches(i.audience, userRole));
 }
 
-module.exports = { generateInsights, getCoachingVoice, deriveFirmGoalState };
+module.exports = { generateInsights, generateCopyForInsights, getCoachingVoice, deriveFirmGoalState };
