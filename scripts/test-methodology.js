@@ -429,6 +429,134 @@ try {
   record('AI PROVIDER', false, '', `failed: ${e.message}`);
 }
 
+// ── 2g. Structured knowledge source registry contract ────────────────────
+console.log('\n[2g] STRUCTURED KNOWLEDGE SOURCE REGISTRY CONTRACT');
+try {
+  const {
+    getKnowledgeRegistry,
+    validateKnowledgeRegistry,
+    validateKnowledgeCard,
+    selectRelevantKnowledge,
+  } = require('../server/lib/knowledge');
+  const { getTenantIntelligenceSnapshot } = require('../server/lib/tenantData');
+
+  const registry = getKnowledgeRegistry();
+  const validation = validateKnowledgeRegistry(registry);
+  const snapshot = getTenantIntelligenceSnapshot({
+    tenantId: 'demo',
+    userId: 'test-user',
+    role: 'project_manager',
+  });
+
+  record('KNOWLEDGE REGISTRY',
+    validation.valid && registry.sources.length === 4 && registry.cards.length >= 30,
+    `registry validates with ${registry.sources.length} sources and ${registry.cards.length} cards`,
+    `registry invalid or incomplete: ${validation.errors.join('; ')}`);
+
+  let invalidCard = null;
+  for (const card of registry.cards) {
+    const result = validateKnowledgeCard(card);
+    if (!result.valid) {
+      invalidCard = `${card.id}: ${result.errors.join('; ')}`;
+      break;
+    }
+  }
+  record('KNOWLEDGE REGISTRY',
+    invalidCard === null,
+    'all knowledge cards validate against the card schema',
+    `invalid card: ${invalidCard}`);
+
+  const cardIds = new Set();
+  let duplicateCardId = null;
+  for (const card of registry.cards) {
+    if (cardIds.has(card.id)) {
+      duplicateCardId = card.id;
+      break;
+    }
+    cardIds.add(card.id);
+  }
+  record('KNOWLEDGE REGISTRY',
+    duplicateCardId === null,
+    'all knowledge card IDs are unique',
+    `duplicate card id: ${duplicateCardId}`);
+
+  record('KNOWLEDGE REGISTRY',
+    registry.sources.every(source => source.requiresModel === false && source.requiresApi === false),
+    'no knowledge source requires model or API access',
+    'expected every knowledge source to declare requiresModel=false and requiresApi=false');
+
+  const limited = selectRelevantKnowledge({
+    tenantSnapshot: snapshot,
+    userRole: 'director',
+    userMessage: 'What matters today across utilisation, pipeline, and AR?',
+    limit: 3,
+  });
+  record('KNOWLEDGE SELECTOR',
+    limited.length <= 3,
+    `selector respects max limit (${limited.length}/3)`,
+    `selector returned ${limited.length} cards for limit 3`);
+
+  const utilCards = selectRelevantKnowledge({
+    tenantSnapshot: snapshot,
+    insight: {
+      type: 'benchmark_gap',
+      metric: 'utilisationRate',
+      title: 'Utilisation below benchmark',
+      body: 'Low utilisation staff and capacity gaps are reducing billable performance.',
+    },
+    userRole: 'project_manager',
+    userMessage: 'Where is our utilisation gap?',
+    limit: 5,
+  });
+  record('KNOWLEDGE SELECTOR',
+    utilCards.some(card => card.id === 'spi-utilization-benchmark-threshold' || card.id === 'pwm-ops-l2-visibility'),
+    `utilisation gap selects relevant cards (${utilCards.map(card => card.id).join(', ')})`,
+    `utilisation gap missed expected cards: ${utilCards.map(card => card.id).join(', ')}`);
+
+  const pipelineCards = selectRelevantKnowledge({
+    tenantSnapshot: {
+      ...snapshot,
+      user: { ...snapshot.user, role: 'director' },
+    },
+    insight: {
+      type: 'benchmark_gap',
+      metric: 'forwardBookingWeeks',
+      title: 'Forward booking below threshold',
+      body: 'Pipeline gap and revenue confidence are affecting forward booking.',
+    },
+    userRole: 'director',
+    userMessage: 'Talk me through the pipeline gap and revenue confidence risk.',
+    limit: 5,
+  });
+  record('KNOWLEDGE SELECTOR',
+    pipelineCards.some(card => card.id === 'pwm-growth-pipeline-discipline' || card.id === 'pwm-growth-how-fast-are-you-growing'),
+    `pipeline gap selects relevant cards (${pipelineCards.map(card => card.id).join(', ')})`,
+    `pipeline gap missed expected cards: ${pipelineCards.map(card => card.id).join(', ')}`);
+
+  const arCards = selectRelevantKnowledge({
+    tenantSnapshot: {
+      ...snapshot,
+      user: { ...snapshot.user, role: 'finance' },
+    },
+    insight: {
+      type: 'at_risk',
+      metric: 'overdueInvoices',
+      title: 'Overdue invoice',
+      body: 'INV-1847 is overdue and sitting in AR.',
+    },
+    userRole: 'finance',
+    userMessage: 'Which overdue AR items need follow-up?',
+    limit: 5,
+  });
+  record('KNOWLEDGE SELECTOR',
+    arCards.some(card => card.id === 'pwm-ops-l1-lean-admin' || card.id === 'pwm-ops-how-profitable-are-you'),
+    `overdue AR selects relevant cards (${arCards.map(card => card.id).join(', ')})`,
+    `overdue AR missed expected cards: ${arCards.map(card => card.id).join(', ')}`);
+
+} catch (e) {
+  record('KNOWLEDGE REGISTRY', false, '', `failed: ${e.message}`);
+}
+
 // ── 3. Maturity assessment ────────────────────────────────────────────────
 console.log('\n[3] MATURITY ASSESSMENT SCORES CORRECTLY');
 try {
@@ -525,7 +653,7 @@ try {
   const { assessMaturity }    = require('../server/lib/methodology/maturityAssessor');
 
   const minimums = { project_manager: 4, time_expense: 1, finance: 2, director: 3 };
-  const required = ['id', 'type', 'title', 'body', 'severity', 'audience', 'action'];
+  const required = ['id', 'type', 'title', 'body', 'severity', 'audience', 'action', 'stableIdentity', 'facts', 'schemaVersion'];
   const allByRole = {};
 
   for (const role of Object.keys(minimums)) {
@@ -554,7 +682,7 @@ try {
     if (insights.length > 0) {
       record('INSIGHTS',
         badField === null,
-        `${role}: every insight has id/type/title/body/severity/audience/action`,
+        `${role}: every insight has legacy fields plus stableIdentity/facts/schemaVersion`,
         `${role}: insight ${badId} missing field '${badField}'`);
     }
   }
@@ -574,6 +702,121 @@ try {
     leak === null,
     `project_manager results contain no audience-restricted leakage`,
     `audience leak in PM results: ${leak}`);
+
+  const generatedInsights = Object.values(allByRole).flat();
+
+  let badFactsObject = null;
+  for (const i of generatedInsights) {
+    if (!i.facts || typeof i.facts !== 'object' || Array.isArray(i.facts)) {
+      badFactsObject = i.id;
+      break;
+    }
+  }
+  record('INSIGHTS',
+    badFactsObject === null,
+    'every generated insight has a facts object',
+    `insight '${badFactsObject}' missing a facts object`);
+
+  let badGeneratedCopy = null;
+  for (const i of generatedInsights) {
+    if (i.generatedCopy !== null) {
+      badGeneratedCopy = i.id;
+      break;
+    }
+  }
+  record('INSIGHTS',
+    badGeneratedCopy === null,
+    'generatedCopy is null before model-generated copy is wired',
+    `insight '${badGeneratedCopy}' has non-null generatedCopy`);
+
+  let badCacheExpiry = null;
+  for (const i of generatedInsights) {
+    if (i.cacheExpiresAt !== null) {
+      badCacheExpiry = i.id;
+      break;
+    }
+  }
+  record('INSIGHTS',
+    badCacheExpiry === null,
+    'cacheExpiresAt is null until fact/cache lifecycle is wired',
+    `insight '${badCacheExpiry}' has non-null cacheExpiresAt`);
+
+  const legacyCardFields = ['situationTitle', 'decisionBridge', 'primaryAction', 'title', 'body', 'action'];
+  let emptyCardField = null;
+  for (const i of generatedInsights) {
+    for (const field of legacyCardFields) {
+      if (typeof i[field] !== 'string' || i[field].trim().length === 0) {
+        emptyCardField = `${i.id}.${field}`;
+        break;
+      }
+    }
+    if (!Array.isArray(i.secondaryOptions) || i.secondaryOptions.length === 0) {
+      emptyCardField = `${i.id}.secondaryOptions`;
+    }
+    if (emptyCardField) break;
+  }
+  record('INSIGHTS',
+    emptyCardField === null,
+    'current app card fields are present and non-empty',
+    `empty app card field: ${emptyCardField}`);
+
+  const factContracts = [
+    {
+      label: 'utilisation_gap',
+      when: i => i.metric === 'utilisationRate',
+      fields: ['currentRate', 'benchmarkRate', 'gapPp', 'previousRate', 'orgName', 'billableHeadcount', 'impliedChargeOutRate', 'lowUtilStaff', 'teamBreakdown'],
+    },
+    {
+      label: 'missing_timesheets',
+      when: i => i.metric === 'timesheetCompletionRate' || i.metric === 'myTimesheets',
+      fields: ['people'],
+    },
+    {
+      label: 'forward_booking_gap',
+      when: i => i.metric === 'forwardBookingWeeks',
+      fields: ['currentWeeks', 'targetWeeks', 'orgName', 'pendingProposals'],
+    },
+    {
+      label: 'at_risk_project',
+      when: i => i.metric === 'projectMargin',
+      fields: ['project', 'client', 'budgetFee', 'workedAmount', 'overBudgetPct', 'overBudgetAmount'],
+    },
+    {
+      label: 'overdue_invoice',
+      when: i => i.metric === 'overdueInvoices',
+      fields: ['client', 'amount', 'daysOverdue', 'invoiceNumber', 'paymentTerms', 'lastContactDaysAgo'],
+    },
+    {
+      label: 'wip_flag',
+      when: i => i.metric === 'outstandingWIP',
+      fields: ['totalWip', 'oldestMonth', 'projectBreakdown'],
+    },
+    {
+      label: 'allocation_summary',
+      when: i => i.metric === 'myAllocations',
+      fields: ['project', 'timecode', 'allocatedHours', 'loggedHours', 'remainingHours', 'allocatedHoursPerWeek'],
+    },
+  ];
+
+  let missingFactField = null;
+  for (const i of generatedInsights) {
+    const contract = factContracts.find(c => c.when(i));
+    if (!contract) {
+      missingFactField = `${i.id}: no fact contract for metric '${i.metric}'`;
+      break;
+    }
+    for (const field of contract.fields) {
+      if (!(field in i.facts)) {
+        missingFactField = `${i.id} (${contract.label}).${field}`;
+        break;
+      }
+    }
+    if (missingFactField) break;
+  }
+  record('INSIGHTS',
+    missingFactField === null,
+    'facts include required fields for every generated insight type',
+    `missing required fact field: ${missingFactField}`);
 } catch (e) {
   record('INSIGHTS', false, '', `failed: ${e.message}`);
 }
@@ -628,6 +871,20 @@ try {
     unreadA.length === 1,
     `after markRead, user-A has 1 unread`,
     `expected unread=1, got ${unreadA.length}`);
+
+  store.addInsight(TEST_A, {
+    ...stub('iso-a-1'),
+    stableIdentity: 'store-refresh-test',
+    facts: { refreshed: true },
+    generatedCopy: null,
+    cacheExpiresAt: null,
+    schemaVersion: 'insight.v2',
+  });
+  const refreshed = store.getInsights(TEST_A).find(i => i.id === 'iso-a-1');
+  record('STORE',
+    refreshed && refreshed.read === true && refreshed.facts && refreshed.facts.refreshed === true,
+    `duplicate add refreshes shape while preserving read state`,
+    `expected refreshed read insight with facts, got ${JSON.stringify(refreshed)}`);
 } catch (e) {
   record('STORE', false, '', `failed: ${e.message}`);
 } finally {
@@ -766,15 +1023,164 @@ try {
   record('COACHING STATE', false, '', `failed: ${e.message}`);
 }
 
-// ── Summary ───────────────────────────────────────────────────────────────
-console.log('\n' + '─'.repeat(40));
-console.log(`✓ ${passed} test(s) passed`);
-if (failed > 0) {
-  console.log(`✗ ${failed} test(s) failed`);
-  console.log('\nFailures:');
-  for (const f of failures) console.log(`  • ${f}`);
-  process.exit(1);
-} else {
-  console.log('All tests passed.');
-  process.exit(0);
+// ── 9. Model-generated insight copy contract ─────────────────────────────
+async function runGeneratedCopyTests() {
+  console.log('\n[9] MODEL-GENERATED INSIGHT COPY CONTRACT');
+  try {
+    const { generateInsights, generateCopyForInsights } = require('../server/lib/methodology/insightGenerator');
+    const { getMockTenantData } = require('../server/lib/methodology/mockTenantData');
+    const { assessMaturity } = require('../server/lib/methodology/maturityAssessor');
+    const { getTenantIntelligenceSnapshot } = require('../server/lib/tenantData');
+
+    const data = getMockTenantData('test-user', 'project_manager');
+    const maturity = assessMaturity(data);
+    const baseInsights = generateInsights('test-user', 'project_manager', data, maturity).slice(0, 3);
+    const tenantSnapshot = getTenantIntelligenceSnapshot({
+      tenantId: 'demo',
+      userId: 'test-user',
+      role: 'project_manager',
+    });
+    const now = new Date('2026-05-01T12:00:00.000Z');
+
+    let calls = 0;
+    let requestText = '';
+    const fakeProvider = {
+      isConfigured: () => true,
+      async generateText(args) {
+        calls += 1;
+        requestText = args.messages[0].content;
+        const payload = JSON.parse(requestText);
+        return JSON.stringify({
+          insights: payload.insights.map(item => ({
+            id: item.id,
+            situationTitle: `Model: ${item.currentCopy.situationTitle}`,
+            decisionBridge: `Model bridge for ${item.metric}`,
+            primaryAction: item.currentCopy.primaryAction || 'Review in Chat',
+            secondaryOptions: item.currentCopy.secondaryOptions,
+            priorityReason: `Prioritized from ${item.metric}`,
+            knowledgeBasis: item.knowledgeCards.map(card => card.id).slice(0, 2),
+          })),
+        });
+      },
+    };
+
+    const copied = await generateCopyForInsights(baseInsights, {
+      modelProvider: fakeProvider,
+      tenantSnapshot,
+      userRole: 'project_manager',
+      now,
+    });
+
+    record('GENERATED COPY',
+      calls === 1,
+      'one batch model call generates copy for multiple insights',
+      `expected one batch call, got ${calls}`);
+
+    record('GENERATED COPY',
+      copied.every(i => i.generatedCopy && i.situationTitle.startsWith('Model:')),
+      'generatedCopy is attached and mapped back to legacy card fields',
+      'expected every copied insight to have generatedCopy and model situationTitle');
+
+    record('GENERATED COPY',
+      copied.every(i => Date.parse(i.cacheExpiresAt) > now.getTime()),
+      'cacheExpiresAt is set in the future',
+      `expected future cache expiry, got ${copied.map(i => i.cacheExpiresAt).join(', ')}`);
+
+    const basisIdsOnly = copied.every(i =>
+      Array.isArray(i.generatedCopy.knowledgeBasis) &&
+      i.generatedCopy.knowledgeBasis.every(id => typeof id === 'string' && id.length > 0 && id.length < 100 && !/\s/.test(id))
+    );
+    record('GENERATED COPY',
+      basisIdsOnly,
+      'generatedCopy.knowledgeBasis contains compact knowledge card IDs',
+      'knowledgeBasis should contain IDs only');
+
+    record('GENERATED COPY',
+      requestText.includes('"knowledgeCards"') &&
+        requestText.includes('"id"') &&
+        !requestText.includes('"sourceNotes"') &&
+        !requestText.includes('"promptUse"') &&
+        !requestText.includes('"antiPatterns"'),
+      'model request includes compact knowledge card context without raw source fields',
+      'model request should include compact knowledge card IDs, not raw source document fields');
+
+    calls = 0;
+    await generateCopyForInsights(copied, {
+      modelProvider: fakeProvider,
+      tenantSnapshot,
+      userRole: 'project_manager',
+      now,
+    });
+    record('GENERATED COPY',
+      calls === 0,
+      'cached insights skip model calls',
+      `expected cached insights to skip calls, got ${calls}`);
+
+    let invalidCalls = 0;
+    const invalidProvider = {
+      isConfigured: () => true,
+      async generateText() {
+        invalidCalls += 1;
+        return '{not valid json';
+      },
+    };
+    const invalid = await generateCopyForInsights([baseInsights[0]], {
+      modelProvider: invalidProvider,
+      tenantSnapshot,
+      userRole: 'project_manager',
+      now,
+    });
+    record('GENERATED COPY',
+      invalidCalls === 1 &&
+        invalid[0].generatedCopy === null &&
+        typeof invalid[0].situationTitle === 'string' &&
+        invalid[0].situationTitle.trim().length > 0 &&
+        typeof invalid[0].decisionBridge === 'string' &&
+        invalid[0].decisionBridge.trim().length > 0,
+      'invalid JSON falls back to existing non-empty card copy',
+      'invalid JSON should not clear generatedCopy fallback card fields');
+
+    let unavailableCalls = 0;
+    const unavailableProvider = {
+      isConfigured: () => false,
+      async generateText() {
+        unavailableCalls += 1;
+        return '{}';
+      },
+    };
+    const unavailable = await generateCopyForInsights([baseInsights[1]], {
+      modelProvider: unavailableProvider,
+      tenantSnapshot,
+      userRole: 'project_manager',
+      now,
+    });
+    record('GENERATED COPY',
+      unavailableCalls === 0 &&
+        unavailable[0].generatedCopy === null &&
+        unavailable[0].situationTitle.trim().length > 0,
+      'unconfigured model provider fails safe without blanking cards',
+      'unconfigured provider should skip model call and preserve legacy copy');
+  } catch (e) {
+    record('GENERATED COPY', false, '', `failed: ${e.message}`);
+  }
 }
+
+// ── Summary ───────────────────────────────────────────────────────────────
+function finish() {
+  console.log('\n' + '─'.repeat(40));
+  console.log(`✓ ${passed} test(s) passed`);
+  if (failed > 0) {
+    console.log(`✗ ${failed} test(s) failed`);
+    console.log('\nFailures:');
+    for (const f of failures) console.log(`  • ${f}`);
+    process.exit(1);
+  } else {
+    console.log('All tests passed.');
+    process.exit(0);
+  }
+}
+
+runGeneratedCopyTests().then(finish).catch(err => {
+  record('GENERATED COPY', false, '', `failed: ${err.message}`);
+  finish();
+});

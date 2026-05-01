@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const DATA_DIR = path.join(__dirname, '../../data');
+const LEGACY_SCHEMA_VERSION = 'insight.legacy';
 
 function filePath(userId) {
   const safeId = String(userId).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -14,10 +15,61 @@ function ensureDir() {
   try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (_) {}
 }
 
+function nonEmptyText(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function normalizeInsight(insight) {
+  const src = insight && typeof insight === 'object' ? insight : {};
+  const title = nonEmptyText(src.title)
+    ? src.title
+    : (nonEmptyText(src.situationTitle) ? src.situationTitle : 'Insight');
+  const body = nonEmptyText(src.body)
+    ? src.body
+    : (nonEmptyText(src.decisionBridge) ? src.decisionBridge : title);
+  const action = nonEmptyText(src.action)
+    ? src.action
+    : (nonEmptyText(src.primaryAction) ? src.primaryAction : 'Review in Chat');
+
+  return {
+    ...src,
+    stableIdentity: nonEmptyText(src.stableIdentity) ? src.stableIdentity : (src.id || title),
+    facts: src.facts && typeof src.facts === 'object' && !Array.isArray(src.facts) ? src.facts : {},
+    generatedCopy: src.generatedCopy === undefined ? null : src.generatedCopy,
+    cacheExpiresAt: src.cacheExpiresAt === undefined ? null : src.cacheExpiresAt,
+    situationTitle: nonEmptyText(src.situationTitle) ? src.situationTitle : title,
+    decisionBridge: nonEmptyText(src.decisionBridge) ? src.decisionBridge : body,
+    primaryAction: nonEmptyText(src.primaryAction) ? src.primaryAction : action,
+    secondaryOptions: Array.isArray(src.secondaryOptions) && src.secondaryOptions.length
+      ? src.secondaryOptions
+      : ['Review in Chat', 'Dismiss'],
+    title,
+    body,
+    action,
+    read: src.read === true,
+    dismissed: src.dismissed === true,
+    schemaVersion: src.schemaVersion || LEGACY_SCHEMA_VERSION,
+  };
+}
+
+function mergeStoredInsight(existing, incoming) {
+  const previous = normalizeInsight(existing);
+  const next = normalizeInsight(incoming);
+  return {
+    ...next,
+    read: previous.read,
+    dismissed: previous.dismissed,
+    createdAt: previous.createdAt || next.createdAt,
+    generatedCopy: next.generatedCopy !== null ? next.generatedCopy : previous.generatedCopy,
+    cacheExpiresAt: next.cacheExpiresAt !== null ? next.cacheExpiresAt : previous.cacheExpiresAt,
+  };
+}
+
 function readStore(userId) {
   ensureDir();
   try {
-    return JSON.parse(fs.readFileSync(filePath(userId), 'utf8'));
+    const parsed = JSON.parse(fs.readFileSync(filePath(userId), 'utf8'));
+    return Array.isArray(parsed) ? parsed.map(normalizeInsight) : [];
   } catch (e) {
     if (e && e.code === 'ENOENT') return [];
     throw e;
@@ -42,8 +94,13 @@ function getUnreadInsights(userId) {
 
 function addInsight(userId, insight) {
   const store = readStore(userId);
-  if (store.some(i => i.id === insight.id)) return;
-  store.unshift(insight);
+  const idx = store.findIndex(i => i.id === insight.id);
+  if (idx !== -1) {
+    store[idx] = mergeStoredInsight(store[idx], insight);
+    writeStore(userId, store.slice(0, 200));
+    return;
+  }
+  store.unshift(normalizeInsight(insight));
   writeStore(userId, store.slice(0, 200));
 }
 

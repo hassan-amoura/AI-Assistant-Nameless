@@ -69,7 +69,12 @@ The SQL contract requires T-SQL for Microsoft SQL Server and Metabase. Do not ch
 Insight objects must preserve backward-compatible fields used by the UI:
 
 - `id`
+- `stableIdentity`
+- `userId`
 - `type`
+- `metric`
+- `cadence`
+- `audience`
 - `title`
 - `body`
 - `severity`
@@ -80,8 +85,14 @@ Insight objects must preserve backward-compatible fields used by the UI:
 - `decisionBridge`
 - `primaryAction`
 - `secondaryOptions`
+- `facts`
+- `generatedCopy`
+- `cacheExpiresAt`
+- `schemaVersion`
 
 New insight schemas must include safe fallbacks for existing cards, badges, split buttons, Action Drawer logic, and review-in-chat flows.
+
+Insight internals are facts-first. Generated insights should carry a stable raw `facts` object and set `generatedCopy: null` until model-generated copy is deliberately wired. Legacy render fields must remain populated so the current Your Assistant cards can render without frontend changes. Do not rename existing `type` values such as `benchmark_gap`, `missing_behavior`, `at_risk`, or `reminder`; future fact categories belong in `stableIdentity` and `facts`, not as breaking UI type changes.
 
 ### Saved Conversation and LocalStorage Contract
 
@@ -122,6 +133,16 @@ Chat prompts include a concise dynamic `<runtime_context>` block containing user
 This block is per-request and must not be added to cached prompt blocks. It must not dump raw capability objects, tenant records, environment details, hostnames, secrets, raw errors, or provider internals.
 
 The runtime block must state that Projectworks write actions are unavailable unless runtime capabilities explicitly say otherwise. The assistant may prepare, validate, and propose unavailable actions, but must not claim write completion without a successful action result.
+
+### Knowledge Source Registry Contract
+
+Structured coaching knowledge lives in `server/lib/knowledge`. The registry contains compact knowledge cards for benchmarks, Projectworks Method, founder/operator playbooks, internal notes, and product policies.
+
+The registry is static and local. Sources must not require model calls, API calls, MCP access, database reads, network access, or raw document retrieval. New source modules should summarize product-safe principles into cards and declare `requiresModel: false` and `requiresApi: false`.
+
+Knowledge cards are selected through `selectRelevantKnowledge({ tenantSnapshot, insight, userMessage, userRole, limit })`. Selection may consider tenant maturity, firm stage, role, insight type, domain, topics, and user-message keywords. Selected cards are advisory context only; they do not imply that Projectworks write actions are available.
+
+Do not dump raw PDFs, source documents, or long passages into prompts. Add future COO, founder, or internal context as new source modules with validated card shapes.
 
 ### Model Provider Contract
 
